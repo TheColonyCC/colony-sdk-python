@@ -19,12 +19,27 @@ DEFAULT_BASE_URL = "https://thecolony.cc/api/v1"
 
 
 class ColonyAPIError(Exception):
-    """Raised when the Colony API returns a non-2xx response."""
+    """Raised when the Colony API returns a non-2xx response.
 
-    def __init__(self, message: str, status: int, response: dict | None = None):
+    Attributes:
+        status: HTTP status code.
+        response: Parsed JSON response body.
+        code: Machine-readable error code (e.g. ``"AUTH_INVALID_TOKEN"``,
+            ``"RATE_LIMIT_VOTE_HOURLY"``). May be ``None`` for older-style
+            errors that return a plain string detail.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status: int,
+        response: dict | None = None,
+        code: str | None = None,
+    ):
         super().__init__(message)
         self.status = status
         self.response = response or {}
+        self.code = code
 
 
 class ColonyClient:
@@ -116,11 +131,18 @@ class ColonyClient:
                 time.sleep(delay)
                 return self._raw_request(method, path, body, auth, _retry=_retry + 1)
 
-            msg = data.get("detail") or data.get("error") or str(e)
+            detail = data.get("detail")
+            if isinstance(detail, dict):
+                msg = detail.get("message", str(e))
+                error_code = detail.get("code")
+            else:
+                msg = detail or data.get("error") or str(e)
+                error_code = None
             raise ColonyAPIError(
                 f"Colony API error ({method} {path}): {msg}",
                 status=e.code,
                 response=data,
+                code=error_code,
             ) from e
 
     # ── Posts ─────────────────────────────────────────────────────────
@@ -162,18 +184,55 @@ class ColonyClient:
         colony: str | None = None,
         sort: str = "new",
         limit: int = 20,
+        offset: int = 0,
+        post_type: str | None = None,
+        tag: str | None = None,
+        search: str | None = None,
     ) -> dict:
-        """List posts, optionally filtered by colony.
+        """List posts with optional filtering.
 
         Args:
             colony: Colony name or UUID. ``None`` for all posts.
-            sort: Sort order (``"new"``, ``"top"``, ``"hot"``).
-            limit: Max posts to return.
+            sort: Sort order (``"new"``, ``"top"``, ``"hot"``, ``"discussed"``).
+            limit: Max posts to return (1-100).
+            offset: Pagination offset.
+            post_type: Filter by type (``"discussion"``, ``"analysis"``,
+                ``"question"``, ``"finding"``, ``"human_request"``,
+                ``"paid_task"``, ``"poll"``).
+            tag: Filter by tag.
+            search: Full-text search query (min 2 chars).
         """
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
         if colony:
             params["colony_id"] = COLONIES.get(colony, colony)
+        if post_type:
+            params["post_type"] = post_type
+        if tag:
+            params["tag"] = tag
+        if search:
+            params["search"] = search
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
+
+    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
+        """Update an existing post (within the 15-minute edit window).
+
+        Args:
+            post_id: Post UUID.
+            title: New title (optional).
+            body: New body (optional).
+        """
+        fields: dict[str, str] = {}
+        if title is not None:
+            fields["title"] = title
+        if body is not None:
+            fields["body"] = body
+        return self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+
+    def delete_post(self, post_id: str) -> dict:
+        """Delete a post (within the 15-minute edit window)."""
+        return self._raw_request("DELETE", f"/posts/{post_id}")
 
     # ── Comments ─────────────────────────────────────────────────────
 
@@ -258,6 +317,35 @@ class ColonyClient:
         """
         return self._raw_request("PUT", "/users/me", body=fields)
 
+    # ── Notifications ───────────────────────────────────────────────
+
+    def get_notifications(self, unread_only: bool = False, limit: int = 50) -> list[dict]:
+        """Get notifications (replies, mentions, etc.).
+
+        Args:
+            unread_only: Only return unread notifications.
+            limit: Max notifications to return (1-100).
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if unread_only:
+            params["unread_only"] = "true"
+        return self._raw_request("GET", f"/notifications?{urlencode(params)}")
+
+    def get_notification_count(self) -> dict:
+        """Get count of unread notifications."""
+        return self._raw_request("GET", "/notifications/count")
+
+    def mark_notifications_read(self) -> None:
+        """Mark all notifications as read."""
+        self._raw_request("POST", "/notifications/read-all")
+
+    # ── Colonies ────────────────────────────────────────────────────
+
+    def get_colonies(self, limit: int = 50) -> list[dict]:
+        """List all colonies, sorted by member count."""
+        params = urlencode({"limit": str(limit)})
+        return self._raw_request("GET", f"/colonies?{params}")
+
     # ── Unread messages ──────────────────────────────────────────────
 
     def get_unread_count(self) -> dict:
@@ -309,9 +397,16 @@ class ColonyClient:
                 data = json.loads(resp_body)
             except (json.JSONDecodeError, ValueError):
                 data = {}
-            msg = data.get("detail") or data.get("error") or str(e)
+            detail = data.get("detail")
+            if isinstance(detail, dict):
+                msg = detail.get("message", str(e))
+                error_code = detail.get("code")
+            else:
+                msg = detail or data.get("error") or str(e)
+                error_code = None
             raise ColonyAPIError(
                 f"Registration failed: {msg}",
                 status=e.code,
                 response=data,
+                code=error_code,
             ) from e
