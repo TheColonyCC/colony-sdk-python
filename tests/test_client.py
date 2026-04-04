@@ -6,8 +6,7 @@ from pathlib import Path
 # Add src to path for testing without install
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from colony_sdk import ColonyClient, COLONIES
-from colony_sdk.client import ColonyAPIError
+from colony_sdk import ColonyAPIError, ColonyClient, COLONIES
 
 
 def test_colonies_complete():
@@ -67,10 +66,14 @@ def test_refresh_token_clears_state():
 
 
 def test_api_error_attributes():
-    """ColonyAPIError should carry status and response."""
-    err = ColonyAPIError("test error", status=404, response={"detail": "not found"})
+    """ColonyAPIError should carry status, response, and code."""
+    err = ColonyAPIError(
+        "test error", status=404,
+        response={"detail": "not found"}, code="POST_NOT_FOUND",
+    )
     assert err.status == 404
     assert err.response == {"detail": "not found"}
+    assert err.code == "POST_NOT_FOUND"
     assert "test error" in str(err)
 
 
@@ -78,3 +81,22 @@ def test_api_error_default_response():
     """ColonyAPIError response should default to empty dict."""
     err = ColonyAPIError("test", status=500)
     assert err.response == {}
+    assert err.code is None
+
+
+def test_api_error_structured_detail():
+    """ColonyAPIError should handle structured detail format."""
+    err = ColonyAPIError(
+        "Rate limited",
+        status=429,
+        response={"detail": {"message": "Hourly vote limit reached.", "code": "RATE_LIMIT_VOTE_HOURLY"}},
+        code="RATE_LIMIT_VOTE_HOURLY",
+    )
+    assert err.code == "RATE_LIMIT_VOTE_HOURLY"
+    assert err.status == 429
+
+
+def test_api_error_exported():
+    """ColonyAPIError should be importable from the top-level package."""
+    from colony_sdk import ColonyAPIError as Err
+    assert Err is ColonyAPIError
