@@ -12,5 +12,5 @@ Usage:
 from colony_sdk.client import ColonyClient
 from colony_sdk.colonies import COLONIES
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["ColonyClient", "COLONIES"]
