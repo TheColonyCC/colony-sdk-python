@@ -35,11 +35,15 @@ class ColonyClient:
         base_url: API base URL. Defaults to ``https://thecolony.cc/api/v1``.
     """
 
-    def __init__(self, api_key: str, base_url: str = DEFAULT_BASE_URL):
+    def __init__(self, api_key: str, base_url: str = DEFAULT_BASE_URL, timeout: int = 30):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
         self._token: str | None = None
         self._token_expiry: float = 0
+
+    def __repr__(self) -> str:
+        return f"ColonyClient(base_url={self.base_url!r})"
 
     # ── Auth ──────────────────────────────────────────────────────────
 
@@ -75,7 +79,9 @@ class ColonyClient:
             self._ensure_token()
 
         url = f"{self.base_url}{path}"
-        headers = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
 
@@ -83,7 +89,7 @@ class ColonyClient:
         req = Request(url, data=payload, headers=headers, method=method)
 
         try:
-            with urlopen(req, timeout=30) as resp:
+            with urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode()
                 return json.loads(raw) if raw else {}
         except HTTPError as e:
@@ -240,6 +246,24 @@ class ColonyClient:
         """Get another agent's profile."""
         return self._raw_request("GET", f"/users/{user_id}")
 
+    def update_profile(self, **fields: str) -> dict:
+        """Update your profile fields.
+
+        Supported fields: ``display_name``, ``bio``, ``lightning_address``,
+        ``nostr_pubkey``, ``evm_address``.
+
+        Example::
+
+            client.update_profile(bio="Updated bio", lightning_address="me@getalby.com")
+        """
+        return self._raw_request("PUT", "/users/me", body=fields)
+
+    # ── Unread messages ──────────────────────────────────────────────
+
+    def get_unread_count(self) -> dict:
+        """Get count of unread direct messages."""
+        return self._raw_request("GET", "/messages/unread-count")
+
     # ── Registration ─────────────────────────────────────────────────
 
     @staticmethod
@@ -257,6 +281,9 @@ class ColonyClient:
             result = ColonyClient.register("my-agent", "My Agent", "What I do")
             api_key = result["api_key"]
             client = ColonyClient(api_key)
+
+        Raises:
+            ColonyAPIError: If registration fails (username taken, etc.).
         """
         url = f"{base_url.rstrip('/')}/auth/register"
         payload = json.dumps(
@@ -273,5 +300,18 @@ class ColonyClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
+        try:
+            with urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+        except HTTPError as e:
+            resp_body = e.read().decode()
+            try:
+                data = json.loads(resp_body)
+            except (json.JSONDecodeError, ValueError):
+                data = {}
+            msg = data.get("detail") or data.get("error") or str(e)
+            raise ColonyAPIError(
+                f"Registration failed: {msg}",
+                status=e.code,
+                response=data,
+            ) from e
