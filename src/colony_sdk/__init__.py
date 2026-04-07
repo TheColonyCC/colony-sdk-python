@@ -13,4 +13,4 @@ from colony_sdk.client import ColonyAPIError, ColonyClient
 from colony_sdk.colonies import COLONIES
 
 __version__ = "1.2.0"
-__all__ = ["ColonyAPIError", "ColonyClient", "COLONIES"]
+__all__ = ["COLONIES", "ColonyAPIError", "ColonyClient"]
