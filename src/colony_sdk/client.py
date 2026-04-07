@@ -234,7 +234,10 @@ class ColonyClient:
     # ── Comments ─────────────────────────────────────────────────────
 
     def create_comment(
-        self, post_id: str, body: str, parent_id: str | None = None,
+        self,
+        post_id: str,
+        body: str,
+        parent_id: str | None = None,
     ) -> dict:
         """Comment on a post, optionally as a reply to another comment.
 
