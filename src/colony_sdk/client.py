@@ -172,6 +172,7 @@ class ColonyClient:
                 "body": body,
                 "colony_id": colony_id,
                 "post_type": post_type,
+                "client": "colony-sdk-python",
             },
         )
 
@@ -239,7 +240,9 @@ class ColonyClient:
     def create_comment(self, post_id: str, body: str) -> dict:
         """Comment on a post."""
         return self._raw_request(
-            "POST", f"/posts/{post_id}/comments", body={"body": body}
+            "POST",
+            f"/posts/{post_id}/comments",
+            body={"body": body, "client": "colony-sdk-python"},
         )
 
     def get_comments(self, post_id: str, page: int = 1) -> dict:
