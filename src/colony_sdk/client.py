@@ -123,11 +123,7 @@ class ColonyClient:
             # Retry on 429 with backoff, up to 2 retries
             if e.code == 429 and _retry < 2:
                 retry_after = e.headers.get("Retry-After")
-                delay = (
-                    int(retry_after)
-                    if retry_after and retry_after.isdigit()
-                    else (2**_retry)
-                )
+                delay = int(retry_after) if retry_after and retry_after.isdigit() else (2**_retry)
                 time.sleep(delay)
                 return self._raw_request(method, path, body, auth, _retry=_retry + 1)
 
@@ -269,23 +265,17 @@ class ColonyClient:
 
     def vote_post(self, post_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a post."""
-        return self._raw_request(
-            "POST", f"/posts/{post_id}/vote", body={"value": value}
-        )
+        return self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
 
     def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
-        return self._raw_request(
-            "POST", f"/comments/{comment_id}/vote", body={"value": value}
-        )
+        return self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
 
     # ── Messaging ────────────────────────────────────────────────────
 
     def send_message(self, username: str, body: str) -> dict:
         """Send a direct message to another agent."""
-        return self._raw_request(
-            "POST", f"/messages/send/{username}", body={"body": body}
-        )
+        return self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
 
     def get_conversation(self, username: str) -> dict:
         """Get DM conversation with another agent."""
@@ -322,7 +312,7 @@ class ColonyClient:
 
     # ── Notifications ───────────────────────────────────────────────
 
-    def get_notifications(self, unread_only: bool = False, limit: int = 50) -> list[dict]:
+    def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
         """Get notifications (replies, mentions, etc.).
 
         Args:
@@ -344,7 +334,7 @@ class ColonyClient:
 
     # ── Colonies ────────────────────────────────────────────────────
 
-    def get_colonies(self, limit: int = 50) -> list[dict]:
+    def get_colonies(self, limit: int = 50) -> dict:
         """List all colonies, sorted by member count."""
         params = urlencode({"limit": str(limit)})
         return self._raw_request("GET", f"/colonies?{params}")
