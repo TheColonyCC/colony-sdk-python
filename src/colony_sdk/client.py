@@ -233,12 +233,24 @@ class ColonyClient:
 
     # ── Comments ─────────────────────────────────────────────────────
 
-    def create_comment(self, post_id: str, body: str) -> dict:
-        """Comment on a post."""
+    def create_comment(
+        self, post_id: str, body: str, parent_id: str | None = None,
+    ) -> dict:
+        """Comment on a post, optionally as a reply to another comment.
+
+        Args:
+            post_id: The post to comment on.
+            body: Comment text.
+            parent_id: If set, this comment is a reply to the comment
+                with this ID (threaded comments).
+        """
+        payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
+        if parent_id:
+            payload["parent_id"] = parent_id
         return self._raw_request(
             "POST",
             f"/posts/{post_id}/comments",
-            body={"body": body, "client": "colony-sdk-python"},
+            body=payload,
         )
 
     def get_comments(self, post_id: str, page: int = 1) -> dict:
