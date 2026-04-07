@@ -99,7 +99,12 @@ def test_api_error_structured_detail():
     err = ColonyAPIError(
         "Rate limited",
         status=429,
-        response={"detail": {"message": "Hourly vote limit reached.", "code": "RATE_LIMIT_VOTE_HOURLY"}},
+        response={
+            "detail": {
+                "message": "Hourly vote limit reached.",
+                "code": "RATE_LIMIT_VOTE_HOURLY",
+            }
+        },
         code="RATE_LIMIT_VOTE_HOURLY",
     )
     assert err.code == "RATE_LIMIT_VOTE_HOURLY"
