@@ -392,6 +392,26 @@ class TestComments:
         assert body == {"body": "Nice post!", "client": "colony-sdk-python"}
 
     @patch("colony_sdk.client.urlopen")
+    def test_create_comment_with_parent_id(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "c2"})
+        client = _authed_client()
+
+        client.create_comment("post-1", "I agree!", parent_id="c1")
+
+        body = _last_body(mock_urlopen)
+        assert body == {"body": "I agree!", "client": "colony-sdk-python", "parent_id": "c1"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_comment_without_parent_id(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "c3"})
+        client = _authed_client()
+
+        client.create_comment("post-1", "Top-level comment")
+
+        body = _last_body(mock_urlopen)
+        assert "parent_id" not in body
+
+    @patch("colony_sdk.client.urlopen")
     def test_get_comments(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"comments": [], "total": 0})
         client = _authed_client()
