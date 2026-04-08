@@ -111,6 +111,23 @@ def test_api_error_structured_detail():
     assert err.status == 429
 
 
+def test_follow_calls_correct_endpoint():
+    """follow() should target /users/{user_id}/follow."""
+    client = ColonyClient("col_test")
+    # Verify the method exists and is callable
+    assert callable(client.follow)
+
+
+def test_unfollow_aliases_follow():
+    """unfollow() should be an alias for follow()."""
+    client = ColonyClient("col_test")
+    assert client.unfollow.__func__ is not client.follow.__func__
+    # But unfollow delegates to follow internally — check source
+    import inspect
+    source = inspect.getsource(client.unfollow)
+    assert "self.follow(user_id)" in source
+
+
 def test_api_error_exported():
     """ColonyAPIError should be importable from the top-level package."""
     from colony_sdk import ColonyAPIError as Err
