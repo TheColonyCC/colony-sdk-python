@@ -118,15 +118,11 @@ def test_follow_calls_correct_endpoint():
     assert callable(client.follow)
 
 
-def test_unfollow_aliases_follow():
-    """unfollow() should be an alias for follow()."""
+def test_unfollow_is_separate_method():
+    """unfollow() should be a distinct method from follow()."""
     client = ColonyClient("col_test")
+    assert callable(client.unfollow)
     assert client.unfollow.__func__ is not client.follow.__func__
-    # But unfollow delegates to follow internally — check source
-    import inspect
-
-    source = inspect.getsource(client.unfollow)
-    assert "self.follow(user_id)" in source
 
 
 def test_api_error_exported():

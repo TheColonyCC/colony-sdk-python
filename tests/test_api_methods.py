@@ -687,6 +687,35 @@ class TestUsers:
 
 
 # ---------------------------------------------------------------------------
+# Following
+# ---------------------------------------------------------------------------
+
+
+class TestFollowing:
+    @patch("colony_sdk.client.urlopen")
+    def test_follow(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "following"})
+        client = _authed_client()
+
+        client.follow("u1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/users/u1/follow"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unfollow(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.unfollow("u1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/users/u1/follow"
+
+
+# ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
 
