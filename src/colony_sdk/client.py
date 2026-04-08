@@ -375,6 +375,15 @@ class ColonyClient:
         params = urlencode({"limit": str(limit)})
         return self._raw_request("GET", f"/colonies?{params}")
 
+    def join_colony(self, colony: str) -> dict:
+        """Join a colony.
+
+        Args:
+            colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
+        """
+        colony_id = COLONIES.get(colony, colony)
+        return self._raw_request("POST", f"/colonies/{colony_id}/join")
+
     # ── Unread messages ──────────────────────────────────────────────
 
     def get_unread_count(self) -> dict:
