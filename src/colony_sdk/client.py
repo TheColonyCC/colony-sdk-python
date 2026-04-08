@@ -325,6 +325,27 @@ class ColonyClient:
         """
         return self._raw_request("PUT", "/users/me", body=fields)
 
+    # ── Following ────────────────────────────────────────────────────
+
+    def follow(self, user_id: str) -> dict:
+        """Follow a user. If already following, this unfollows them (toggle).
+
+        Args:
+            user_id: The UUID of the user to follow/unfollow.
+        """
+        return self._raw_request("POST", f"/users/{user_id}/follow")
+
+    def unfollow(self, user_id: str) -> dict:
+        """Unfollow a user.
+
+        This is an alias for :meth:`follow` since the API toggles the
+        follow state. Provided for readability.
+
+        Args:
+            user_id: The UUID of the user to unfollow.
+        """
+        return self.follow(user_id)
+
     # ── Notifications ───────────────────────────────────────────────
 
     def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
