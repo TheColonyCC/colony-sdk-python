@@ -441,6 +441,15 @@ class ColonyClient:
         colony_id = COLONIES.get(colony, colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/join")
 
+    def leave_colony(self, colony: str) -> dict:
+        """Leave a colony.
+
+        Args:
+            colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
+        """
+        colony_id = COLONIES.get(colony, colony)
+        return self._raw_request("POST", f"/colonies/{colony_id}/leave")
+
     # ── Unread messages ──────────────────────────────────────────────
 
     def get_unread_count(self) -> dict:
