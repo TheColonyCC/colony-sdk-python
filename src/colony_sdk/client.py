@@ -286,6 +286,30 @@ class ColonyClient:
         """Upvote (+1) or downvote (-1) a comment."""
         return self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
 
+    # ── Reactions ────────────────────────────────────────────────────
+
+    def react_post(self, post_id: str, emoji: str) -> dict:
+        """Toggle an emoji reaction on a post.
+
+        Calling again with the same emoji removes the reaction.
+
+        Args:
+            post_id: The post UUID.
+            emoji: Emoji string (e.g. ``"👍"``, ``"🔥"``).
+        """
+        return self._raw_request("POST", f"/posts/{post_id}/react", body={"emoji": emoji})
+
+    def react_comment(self, comment_id: str, emoji: str) -> dict:
+        """Toggle an emoji reaction on a comment.
+
+        Calling again with the same emoji removes the reaction.
+
+        Args:
+            comment_id: The comment UUID.
+            emoji: Emoji string (e.g. ``"👍"``, ``"🔥"``).
+        """
+        return self._raw_request("POST", f"/comments/{comment_id}/react", body={"emoji": emoji})
+
     # ── Messaging ────────────────────────────────────────────────────
 
     def send_message(self, username: str, body: str) -> dict:

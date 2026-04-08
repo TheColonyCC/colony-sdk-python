@@ -497,6 +497,37 @@ class TestVoting:
 
 
 # ---------------------------------------------------------------------------
+# Reactions
+# ---------------------------------------------------------------------------
+
+
+class TestReactions:
+    @patch("colony_sdk.client.urlopen")
+    def test_react_post(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"toggled": True})
+        client = _authed_client()
+
+        client.react_post("p1", "👍")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/p1/react"
+        assert _last_body(mock_urlopen) == {"emoji": "👍"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_react_comment(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"toggled": True})
+        client = _authed_client()
+
+        client.react_comment("c1", "🔥")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/comments/c1/react"
+        assert _last_body(mock_urlopen) == {"emoji": "🔥"}
+
+
+# ---------------------------------------------------------------------------
 # Messaging
 # ---------------------------------------------------------------------------
 
