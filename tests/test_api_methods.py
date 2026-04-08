@@ -555,6 +555,37 @@ class TestReactions:
 
 
 # ---------------------------------------------------------------------------
+# Polls
+# ---------------------------------------------------------------------------
+
+
+class TestPolls:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_poll(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"options": [{"id": "opt1", "text": "Yes", "votes": 3}]})
+        client = _authed_client()
+
+        result = client.get_poll("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/posts/p1/poll"
+        assert result["options"][0]["text"] == "Yes"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vote_poll(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"voted": True})
+        client = _authed_client()
+
+        client.vote_poll("p1", "opt1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/p1/poll/vote"
+        assert _last_body(mock_urlopen) == {"option_id": "opt1"}
+
+
+# ---------------------------------------------------------------------------
 # Messaging
 # ---------------------------------------------------------------------------
 
