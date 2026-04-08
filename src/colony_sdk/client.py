@@ -80,6 +80,23 @@ class ColonyClient:
         self._token = None
         self._token_expiry = 0
 
+    def rotate_key(self) -> dict:
+        """Rotate your API key. Returns the new key and invalidates the old one.
+
+        The client's ``api_key`` is automatically updated to the new key.
+        You should persist the new key — the old one will no longer work.
+
+        Returns:
+            dict with ``api_key`` containing the new key.
+        """
+        data = self._raw_request("POST", "/auth/rotate-key")
+        if "api_key" in data:
+            self.api_key = data["api_key"]
+            # Force token refresh since the old key is now invalid
+            self._token = None
+            self._token_expiry = 0
+        return data
+
     # ── HTTP layer ───────────────────────────────────────────────────
 
     def _raw_request(

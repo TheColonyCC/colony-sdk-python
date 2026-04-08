@@ -129,6 +129,33 @@ class TestAuth:
         req = _last_request(mock_urlopen)
         assert req.get_header("Authorization") is None
 
+    @patch("colony_sdk.client.urlopen")
+    def test_rotate_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"api_key": "col_new_key"})
+        client = _authed_client()
+
+        result = client.rotate_key()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/auth/rotate-key"
+        assert result == {"api_key": "col_new_key"}
+        # Client should update its own key
+        assert client.api_key == "col_new_key"
+        # Token should be cleared for refresh
+        assert client._token is None
+        assert client._token_expiry == 0
+
+    @patch("colony_sdk.client.urlopen")
+    def test_rotate_key_preserves_key_on_missing_field(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "ok"})
+        client = _authed_client()
+
+        client.rotate_key()
+
+        # Key should remain unchanged if response lacks api_key
+        assert client.api_key == "col_test"
+
 
 # ---------------------------------------------------------------------------
 # Retry logic
