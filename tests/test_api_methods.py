@@ -663,6 +663,28 @@ class TestColonies:
         assert req.get_method() == "GET"
         assert "limit=10" in req.full_url
 
+    @patch("colony_sdk.client.urlopen")
+    def test_join_colony_by_name(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"joined": True})
+        client = _authed_client()
+
+        client.join_colony("general")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/colonies/{COLONIES['general']}/join"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_join_colony_by_uuid(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"joined": True})
+        client = _authed_client()
+        custom_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        client.join_colony(custom_uuid)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/colonies/{custom_uuid}/join"
+
 
 # ---------------------------------------------------------------------------
 # Registration
