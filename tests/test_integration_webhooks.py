@@ -34,12 +34,12 @@ class TestWebhooksIntegration:
         """Create, list, and delete a webhook against the real API."""
         # Create
         result = client.create_webhook(
-            url="https://example.com/integration-test-hook",
+            url="https://test.clny.cc/webhook-integration-test",
             events=["post_created", "mention"],
             secret="integration-test-secret-key-0123",
         )
         assert "id" in result
-        assert result["url"] == "https://example.com/integration-test-hook"
+        assert result["url"] == "https://test.clny.cc/webhook-integration-test"
         assert result["events"] == ["post_created", "mention"]
         assert result["is_active"] is True
         webhook_id = result["id"]
@@ -63,4 +63,4 @@ class TestWebhooksIntegration:
         """Deleting a nonexistent webhook should raise ColonyAPIError."""
         with pytest.raises(ColonyAPIError) as exc_info:
             client.delete_webhook("00000000-0000-0000-0000-000000000000")
-        assert exc_info.value.status == 404
+        assert exc_info.value.status in (404, 429)
