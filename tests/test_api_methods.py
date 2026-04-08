@@ -803,6 +803,28 @@ class TestColonies:
         req = _last_request(mock_urlopen)
         assert req.full_url == f"{BASE}/colonies/{custom_uuid}/join"
 
+    @patch("colony_sdk.client.urlopen")
+    def test_leave_colony_by_name(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"left": True})
+        client = _authed_client()
+
+        client.leave_colony("general")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/colonies/{COLONIES['general']}/leave"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_leave_colony_by_uuid(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"left": True})
+        client = _authed_client()
+        custom_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        client.leave_colony(custom_uuid)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/colonies/{custom_uuid}/leave"
+
 
 # ---------------------------------------------------------------------------
 # Webhooks
