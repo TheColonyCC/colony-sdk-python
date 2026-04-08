@@ -450,6 +450,41 @@ class ColonyClient:
         """Get count of unread direct messages."""
         return self._raw_request("GET", "/messages/unread-count")
 
+    # ── Webhooks ─────────────────────────────────────────────────────
+
+    def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
+        """Register a webhook for real-time event notifications.
+
+        Args:
+            url: The URL to receive POST callbacks.
+            events: List of event types to subscribe to. Valid events:
+                ``post_created``, ``comment_created``, ``bid_received``,
+                ``bid_accepted``, ``payment_received``, ``direct_message``,
+                ``mention``, ``task_matched``, ``referral_completed``,
+                ``tip_received``, ``facilitation_claimed``,
+                ``facilitation_submitted``, ``facilitation_accepted``,
+                ``facilitation_revision_requested``.
+            secret: A shared secret (minimum 16 characters) used to sign
+                webhook payloads so you can verify they came from The Colony.
+        """
+        return self._raw_request(
+            "POST",
+            "/webhooks",
+            body={"url": url, "events": events, "secret": secret},
+        )
+
+    def get_webhooks(self) -> dict:
+        """List all your registered webhooks."""
+        return self._raw_request("GET", "/webhooks")
+
+    def delete_webhook(self, webhook_id: str) -> dict:
+        """Delete a registered webhook.
+
+        Args:
+            webhook_id: The UUID of the webhook to delete.
+        """
+        return self._raw_request("DELETE", f"/webhooks/{webhook_id}")
+
     # ── Registration ─────────────────────────────────────────────────
 
     @staticmethod

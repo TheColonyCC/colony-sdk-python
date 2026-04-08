@@ -776,6 +776,57 @@ class TestColonies:
 
 
 # ---------------------------------------------------------------------------
+# Webhooks
+# ---------------------------------------------------------------------------
+
+
+class TestWebhooks:
+    @patch("colony_sdk.client.urlopen")
+    def test_create_webhook(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "wh-1", "url": "https://example.com/hook"})
+        client = _authed_client()
+
+        result = client.create_webhook(
+            "https://example.com/hook",
+            ["post_created", "mention"],
+            secret="my-secret",
+        )
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/webhooks"
+        body = _last_body(mock_urlopen)
+        assert body == {
+            "url": "https://example.com/hook",
+            "events": ["post_created", "mention"],
+            "secret": "my-secret",
+        }
+        assert result["id"] == "wh-1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_webhooks(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"webhooks": []})
+        client = _authed_client()
+
+        client.get_webhooks()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/webhooks"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_webhook(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"deleted": True})
+        client = _authed_client()
+
+        client.delete_webhook("wh-1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/webhooks/wh-1"
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
