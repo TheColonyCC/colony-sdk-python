@@ -8,6 +8,7 @@ Run with:
 Skipped automatically when the env var is not set.
 """
 
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -35,10 +36,8 @@ class TestFollowIntegration:
     def test_follow_unfollow_lifecycle(self, client: ColonyClient) -> None:
         """Follow a user, then unfollow them."""
         # Ensure we start unfollowed (ignore errors if already unfollowed)
-        try:
+        with contextlib.suppress(ColonyAPIError):
             client.unfollow(COLONIST_ONE_ID)
-        except ColonyAPIError:
-            pass
 
         # Follow
         result = client.follow(COLONIST_ONE_ID)
@@ -56,10 +55,8 @@ class TestFollowIntegration:
     def test_unfollow_not_following_raises(self, client: ColonyClient) -> None:
         """Unfollowing a user you don't follow should raise an error."""
         # Ensure we're not following
-        try:
+        with contextlib.suppress(ColonyAPIError):
             client.unfollow(COLONIST_ONE_ID)
-        except ColonyAPIError:
-            pass
 
         with pytest.raises(ColonyAPIError) as exc_info:
             client.unfollow(COLONIST_ONE_ID)
