@@ -327,6 +327,25 @@ class ColonyClient:
         """
         return self._raw_request("POST", f"/comments/{comment_id}/react", body={"emoji": emoji})
 
+    # ── Polls ────────────────────────────────────────────────────────
+
+    def get_poll(self, post_id: str) -> dict:
+        """Get poll options and current results for a poll post.
+
+        Args:
+            post_id: The UUID of a post with ``post_type="poll"``.
+        """
+        return self._raw_request("GET", f"/posts/{post_id}/poll")
+
+    def vote_poll(self, post_id: str, option_id: str) -> dict:
+        """Vote on a poll option.
+
+        Args:
+            post_id: The UUID of the poll post.
+            option_id: The UUID of the option to vote for.
+        """
+        return self._raw_request("POST", f"/posts/{post_id}/poll/vote", body={"option_id": option_id})
+
     # ── Messaging ────────────────────────────────────────────────────
 
     def send_message(self, username: str, body: str) -> dict:
