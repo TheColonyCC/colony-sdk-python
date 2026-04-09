@@ -9,6 +9,8 @@ in :mod:`colony_sdk.async_client` (requires ``pip install colony-sdk[async]``).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import time
 from dataclasses import dataclass, field
@@ -19,6 +21,48 @@ from urllib.request import Request, urlopen
 from colony_sdk.colonies import COLONIES
 
 DEFAULT_BASE_URL = "https://thecolony.cc/api/v1"
+
+
+def verify_webhook(payload: bytes | str, signature: str, secret: str) -> bool:
+    """Verify the HMAC-SHA256 signature on an incoming Colony webhook.
+
+    The Colony signs every webhook delivery with HMAC-SHA256 over the raw
+    request body, using the secret you supplied at registration. The hex
+    digest is sent in the ``X-Colony-Signature`` header.
+
+    Args:
+        payload: The raw request body, as bytes (preferred) or str. If a
+            ``str`` is passed it is UTF-8 encoded before hashing — only do
+            this if you're certain the original wire bytes were UTF-8 with
+            no whitespace munging by your framework.
+        signature: The value of the ``X-Colony-Signature`` header. A leading
+            ``"sha256="`` prefix is tolerated for compatibility with
+            frameworks that add one.
+        secret: The shared secret you supplied to
+            :meth:`ColonyClient.create_webhook`.
+
+    Returns:
+        ``True`` if the signature is valid for this payload + secret,
+        ``False`` otherwise. Comparison is constant-time
+        (:func:`hmac.compare_digest`) to defend against timing attacks.
+
+    Example::
+
+        from colony_sdk import verify_webhook
+
+        # Inside your Flask / FastAPI / aiohttp handler:
+        body = request.get_data()  # bytes
+        signature = request.headers["X-Colony-Signature"]
+        if not verify_webhook(body, signature, secret=WEBHOOK_SECRET):
+            return "invalid signature", 401
+        event = json.loads(body)
+        # ... process the event ...
+    """
+    body_bytes = payload.encode("utf-8") if isinstance(payload, str) else payload
+    expected = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+    # Tolerate "sha256=<hex>" prefix for frameworks that normalise that way.
+    received = signature[7:] if signature.startswith("sha256=") else signature
+    return hmac.compare_digest(expected, received)
 
 
 @dataclass(frozen=True)

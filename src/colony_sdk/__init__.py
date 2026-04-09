@@ -34,6 +34,7 @@ from colony_sdk.client import (
     ColonyServerError,
     ColonyValidationError,
     RetryConfig,
+    verify_webhook,
 )
 from colony_sdk.colonies import COLONIES
 
@@ -54,6 +55,7 @@ __all__ = [
     "ColonyServerError",
     "ColonyValidationError",
     "RetryConfig",
+    "verify_webhook",
 ]
 
 

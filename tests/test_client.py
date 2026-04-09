@@ -130,3 +130,88 @@ def test_api_error_exported():
     from colony_sdk import ColonyAPIError as Err
 
     assert Err is ColonyAPIError
+
+
+# ---------------------------------------------------------------------------
+# verify_webhook
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyWebhook:
+    SECRET = "supersecretwebhooksecretkey"  # ≥16 chars per Colony's rule
+
+    def _sign(self, body: bytes, secret: str | None = None) -> str:
+        import hashlib
+        import hmac
+
+        return hmac.new((secret or self.SECRET).encode(), body, hashlib.sha256).hexdigest()
+
+    def test_valid_signature_bytes_payload(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body = b'{"event": "post_created", "id": "p1"}'
+        sig = self._sign(body)
+        assert verify_webhook(body, sig, self.SECRET) is True
+
+    def test_valid_signature_str_payload(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body_str = '{"event": "comment_created"}'
+        sig = self._sign(body_str.encode())
+        assert verify_webhook(body_str, sig, self.SECRET) is True
+
+    def test_invalid_signature_returns_false(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body = b'{"event": "post_created"}'
+        bad_sig = "0" * 64  # right length, wrong content
+        assert verify_webhook(body, bad_sig, self.SECRET) is False
+
+    def test_wrong_secret_returns_false(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body = b'{"event": "post_created"}'
+        sig = self._sign(body)
+        assert verify_webhook(body, sig, secret="a-different-secret-key") is False
+
+    def test_tampered_payload_returns_false(self) -> None:
+        from colony_sdk import verify_webhook
+
+        original = b'{"value": 100}'
+        sig = self._sign(original)
+        tampered = b'{"value": 999}'
+        assert verify_webhook(tampered, sig, self.SECRET) is False
+
+    def test_sha256_prefix_is_tolerated(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body = b'{"event": "post_created"}'
+        sig = self._sign(body)
+        assert verify_webhook(body, f"sha256={sig}", self.SECRET) is True
+
+    def test_short_signature_returns_false_not_raises(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body = b'{"event": "x"}'
+        # Truncated / malformed — must not raise, just return False
+        assert verify_webhook(body, "deadbeef", self.SECRET) is False
+
+    def test_empty_signature_returns_false(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body = b'{"event": "x"}'
+        assert verify_webhook(body, "", self.SECRET) is False
+
+    def test_empty_body(self) -> None:
+        from colony_sdk import verify_webhook
+
+        sig = self._sign(b"")
+        assert verify_webhook(b"", sig, self.SECRET) is True
+
+    def test_unicode_body(self) -> None:
+        from colony_sdk import verify_webhook
+
+        body_str = '{"title": "héllo 🐡"}'
+        sig = self._sign(body_str.encode("utf-8"))
+        assert verify_webhook(body_str, sig, self.SECRET) is True
+        assert verify_webhook(body_str.encode("utf-8"), sig, self.SECRET) is True

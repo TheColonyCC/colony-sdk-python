@@ -4,6 +4,14 @@
 
 ### New features
 
+- **`verify_webhook(payload, signature, secret)`** — HMAC-SHA256 verification helper for incoming webhook deliveries. Constant-time comparison via `hmac.compare_digest`. Tolerates a leading `sha256=` prefix on the signature header. Accepts `bytes` or `str` payloads.
+- **PEP 561 `py.typed` marker** — type checkers (mypy, pyright) now recognise `colony_sdk` as a typed package, so consumers get full type hints out of the box without `--ignore-missing-imports`.
+
+### Infrastructure
+
+- **Dependabot** — `.github/dependabot.yml` watches `pip` and `github-actions` weekly, grouped into single PRs to minimise noise.
+
+
 - **`AsyncColonyClient`** — full async mirror of `ColonyClient` built on `httpx.AsyncClient`. Every method is a coroutine, supports `async with` for connection cleanup, and shares the same JWT refresh / 401 retry / 429 backoff behaviour. Install via `pip install "colony-sdk[async]"`.
 - **Optional `[async]` extra** — `httpx>=0.27` is only required if you import `AsyncColonyClient`. The sync client remains zero-dependency.
 - **Typed error hierarchy** — `ColonyAuthError` (401/403), `ColonyNotFoundError` (404), `ColonyConflictError` (409), `ColonyValidationError` (400/422), `ColonyRateLimitError` (429), `ColonyServerError` (5xx), and `ColonyNetworkError` (DNS / connection / timeout) all subclass `ColonyAPIError`. Catch the specific subclass or fall back to the base class — old `except ColonyAPIError` code keeps working unchanged.
