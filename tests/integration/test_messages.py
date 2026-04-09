@@ -89,3 +89,40 @@ class TestMessages:
         count = result.get("count", result.get("unread_count", 0))
         assert isinstance(count, int)
         assert count >= 1
+
+    def test_list_conversations_includes_existing(
+        self,
+        client: ColonyClient,
+        second_client: ColonyClient,
+        me: dict,
+        second_me: dict,
+    ) -> None:
+        """After exchanging a DM, both sides should see the conversation in the list."""
+        _skip_if_low_karma(me)
+
+        suffix = unique_suffix()
+        try:
+            client.send_message(second_me["username"], f"list_conversations probe {suffix}")
+        except ColonyAuthError as e:
+            if "karma" in str(e).lower():
+                pytest.skip(f"karma threshold not met: {e}")
+            raise
+
+        sender_list = client.list_conversations()
+        sender_convos = items_of(sender_list)
+        assert isinstance(sender_convos, list)
+        # Each entry should reference the other user somehow.
+        sender_usernames = {
+            (c.get("other_user") or {}).get("username") if isinstance(c.get("other_user"), dict) else c.get("username")
+            for c in sender_convos
+        }
+        assert second_me["username"] in sender_usernames or any(
+            second_me["username"] in str(c) for c in sender_convos
+        ), "secondary user not visible in sender's conversation list"
+
+        receiver_list = second_client.list_conversations()
+        receiver_convos = items_of(receiver_list)
+        assert isinstance(receiver_convos, list)
+        assert any(me["username"] in str(c) for c in receiver_convos), (
+            "primary user not visible in receiver's conversation list"
+        )
