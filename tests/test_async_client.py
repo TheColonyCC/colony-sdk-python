@@ -411,6 +411,32 @@ class TestWriteMethods:
         assert seen["body"]["colony_id"] == COLONIES["general"]
         assert seen["body"]["post_type"] == "discussion"
         assert seen["body"]["client"] == "colony-sdk-python"
+        assert "metadata" not in seen["body"]
+
+    async def test_create_post_with_metadata(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "poll-1"})
+
+        client = _make_client(handler)
+        metadata = {
+            "poll_options": [
+                {"id": "yes", "text": "Yes"},
+                {"id": "no", "text": "No"},
+            ],
+            "multiple_choice": False,
+        }
+        await client.create_post(
+            "Vote?",
+            "Pick one",
+            colony="general",
+            post_type="poll",
+            metadata=metadata,
+        )
+        assert seen["body"]["metadata"] == metadata
+        assert seen["body"]["post_type"] == "poll"
 
     async def test_update_post(self) -> None:
         seen: dict = {}
@@ -520,8 +546,43 @@ class TestWriteMethods:
             return _json_response({"voted": True})
 
         client = _make_client(handler)
-        await client.vote_poll("p1", "opt-1")
+        await client.vote_poll("p1", ["opt-1"])
         assert seen["url"].endswith("/polls/p1/vote")
+        assert seen["body"] == {"option_ids": ["opt-1"]}
+
+    async def test_vote_poll_deprecated_option_id_kwarg(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"voted": True})
+
+        client = _make_client(handler)
+        with pytest.warns(DeprecationWarning, match="option_id"):
+            await client.vote_poll("p1", option_id="opt-1")
+        assert seen["body"] == {"option_ids": ["opt-1"]}
+
+    async def test_vote_poll_rejects_no_args(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(ValueError, match="requires option_ids"):
+            await client.vote_poll("p1")
+
+    async def test_vote_poll_rejects_both_args(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(ValueError, match="not both"):
+            await client.vote_poll("p1", option_ids=["a"], option_id="b")
+
+    async def test_vote_poll_deprecated_string_positional(self) -> None:
+        """Bare string in the positional slot is auto-wrapped + warns."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"voted": True})
+
+        client = _make_client(handler)
+        with pytest.warns(DeprecationWarning, match="single"):
+            await client.vote_poll("p1", "opt-1")
         assert seen["body"] == {"option_ids": ["opt-1"]}
 
     async def test_send_message(self) -> None:
@@ -663,6 +724,45 @@ class TestWriteMethods:
         client = _make_client(handler)
         await client.delete_webhook("wh1")
         assert seen["method"] == "DELETE"
+
+    async def test_update_webhook(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "wh1"})
+
+        client = _make_client(handler)
+        await client.update_webhook("wh1", is_active=True, events=["post_created"])
+        assert seen["method"] == "PUT"
+        assert seen["url"].endswith("/webhooks/wh1")
+        assert seen["body"] == {"is_active": True, "events": ["post_created"]}
+
+    async def test_update_webhook_url_and_secret(self) -> None:
+        """Cover the ``url=`` and ``secret=`` branches."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "wh1"})
+
+        client = _make_client(handler)
+        await client.update_webhook(
+            "wh1",
+            url="https://new.example.com/hook",
+            secret="brand-new-secret-1234",
+        )
+        assert seen["body"] == {
+            "url": "https://new.example.com/hook",
+            "secret": "brand-new-secret-1234",
+        }
+
+    async def test_update_webhook_rejects_no_fields(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(ValueError, match="at least one field"):
+            await client.update_webhook("wh1")
 
 
 # ---------------------------------------------------------------------------

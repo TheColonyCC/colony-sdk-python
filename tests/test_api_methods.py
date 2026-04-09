@@ -315,6 +315,42 @@ class TestPosts:
         assert body["colony_id"] == custom_id
 
     @patch("colony_sdk.client.urlopen")
+    def test_create_post_with_metadata(self, mock_urlopen: MagicMock) -> None:
+        """``metadata`` is forwarded to the server when present."""
+        mock_urlopen.return_value = _mock_response({"id": "post-1"})
+        client = _authed_client()
+
+        metadata = {
+            "poll_options": [
+                {"id": "opt_a", "text": "Yes"},
+                {"id": "opt_b", "text": "No"},
+            ],
+            "multiple_choice": False,
+        }
+        client.create_post(
+            title="Vote?",
+            body="Pick one",
+            colony="general",
+            post_type="poll",
+            metadata=metadata,
+        )
+
+        body = _last_body(mock_urlopen)
+        assert body["metadata"] == metadata
+        assert body["post_type"] == "poll"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_omits_metadata_when_none(self, mock_urlopen: MagicMock) -> None:
+        """``metadata`` is absent from the body when not passed."""
+        mock_urlopen.return_value = _mock_response({"id": "post-1"})
+        client = _authed_client()
+
+        client.create_post(title="T", body="B")
+
+        body = _last_body(mock_urlopen)
+        assert "metadata" not in body
+
+    @patch("colony_sdk.client.urlopen")
     def test_get_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "abc"})
         client = _authed_client()
@@ -577,7 +613,7 @@ class TestPolls:
         mock_urlopen.return_value = _mock_response({"voted": True})
         client = _authed_client()
 
-        client.vote_poll("p1", "opt1")
+        client.vote_poll("p1", ["opt1"])
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
@@ -593,6 +629,38 @@ class TestPolls:
         client.vote_poll("p1", ["opt1", "opt2"])
 
         assert _last_body(mock_urlopen) == {"option_ids": ["opt1", "opt2"]}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vote_poll_deprecated_option_id_kwarg(self, mock_urlopen: MagicMock) -> None:
+        """Old ``option_id=`` kwarg still works but emits DeprecationWarning."""
+        mock_urlopen.return_value = _mock_response({"voted": True})
+        client = _authed_client()
+
+        with pytest.warns(DeprecationWarning, match="option_id"):
+            client.vote_poll("p1", option_id="opt1")
+
+        assert _last_body(mock_urlopen) == {"option_ids": ["opt1"]}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vote_poll_deprecated_string_positional(self, mock_urlopen: MagicMock) -> None:
+        """Bare string in the positional slot is wrapped + warns."""
+        mock_urlopen.return_value = _mock_response({"voted": True})
+        client = _authed_client()
+
+        with pytest.warns(DeprecationWarning, match="single"):
+            client.vote_poll("p1", "opt1")
+
+        assert _last_body(mock_urlopen) == {"option_ids": ["opt1"]}
+
+    def test_vote_poll_rejects_no_args(self) -> None:
+        client = _authed_client()
+        with pytest.raises(ValueError, match="requires option_ids"):
+            client.vote_poll("p1")
+
+    def test_vote_poll_rejects_both_args(self) -> None:
+        client = _authed_client()
+        with pytest.raises(ValueError, match="not both"):
+            client.vote_poll("p1", option_ids=["a"], option_id="b")
 
 
 # ---------------------------------------------------------------------------
@@ -1014,6 +1082,54 @@ class TestWebhooks:
         req = _last_request(mock_urlopen)
         assert req.get_method() == "DELETE"
         assert req.full_url == f"{BASE}/webhooks/wh-1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_webhook_partial(self, mock_urlopen: MagicMock) -> None:
+        """Only the fields you pass are sent."""
+        mock_urlopen.return_value = _mock_response({"id": "wh-1"})
+        client = _authed_client()
+
+        client.update_webhook("wh-1", url="https://new.example.com/hook")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/webhooks/wh-1"
+        assert _last_body(mock_urlopen) == {"url": "https://new.example.com/hook"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_webhook_reactivate(self, mock_urlopen: MagicMock) -> None:
+        """``is_active=True`` is the canonical way to recover an auto-disabled webhook."""
+        mock_urlopen.return_value = _mock_response({"id": "wh-1", "is_active": True})
+        client = _authed_client()
+
+        client.update_webhook("wh-1", is_active=True)
+
+        assert _last_body(mock_urlopen) == {"is_active": True}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_webhook_all_fields(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "wh-1"})
+        client = _authed_client()
+
+        client.update_webhook(
+            "wh-1",
+            url="https://new.example.com/hook",
+            secret="brand-new-secret-1234",
+            events=["post_created"],
+            is_active=True,
+        )
+
+        assert _last_body(mock_urlopen) == {
+            "url": "https://new.example.com/hook",
+            "secret": "brand-new-secret-1234",
+            "events": ["post_created"],
+            "is_active": True,
+        }
+
+    def test_update_webhook_rejects_no_fields(self) -> None:
+        client = _authed_client()
+        with pytest.raises(ValueError, match="at least one field"):
+            client.update_webhook("wh-1")
 
 
 # ---------------------------------------------------------------------------
