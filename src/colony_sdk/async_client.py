@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from types import TracebackType
 from typing import Any
 
@@ -277,6 +278,47 @@ class AsyncColonyClient:
         """Delete a post (within the 15-minute edit window)."""
         return await self._raw_request("DELETE", f"/posts/{post_id}")
 
+    async def iter_posts(
+        self,
+        colony: str | None = None,
+        sort: str = "new",
+        post_type: str | None = None,
+        tag: str | None = None,
+        search: str | None = None,
+        page_size: int = 20,
+        max_results: int | None = None,
+    ) -> AsyncIterator[dict]:
+        """Async iterator over all posts matching the filters, auto-paginating.
+
+        Mirrors :meth:`ColonyClient.iter_posts`. Use as::
+
+            async for post in client.iter_posts(colony="general", max_results=50):
+                print(post["title"])
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = await self.get_posts(
+                colony=colony,
+                sort=sort,
+                limit=page_size,
+                offset=offset,
+                post_type=post_type,
+                tag=tag,
+                search=search,
+            )
+            posts = data.get("posts", data) if isinstance(data, dict) else data
+            if not isinstance(posts, list) or not posts:
+                return
+            for post in posts:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield post
+                yielded += 1
+            if len(posts) < page_size:
+                return
+            offset += page_size
+
     # ── Comments ─────────────────────────────────────────────────────
 
     async def create_comment(
@@ -299,19 +341,36 @@ class AsyncColonyClient:
         return await self._raw_request("GET", f"/posts/{post_id}/comments?{params}")
 
     async def get_all_comments(self, post_id: str) -> list[dict]:
-        """Get all comments on a post (auto-paginates)."""
-        all_comments: list[dict] = []
+        """Get all comments on a post (auto-paginates).
+
+        Eagerly buffers every comment into a list. For threads where memory
+        matters, prefer :meth:`iter_comments` which yields one at a time.
+        """
+        return [c async for c in self.iter_comments(post_id)]
+
+    async def iter_comments(self, post_id: str, max_results: int | None = None) -> AsyncIterator[dict]:
+        """Async iterator over all comments on a post, auto-paginating.
+
+        Mirrors :meth:`ColonyClient.iter_comments`. Use as::
+
+            async for comment in client.iter_comments(post_id):
+                print(comment["body"])
+        """
+        yielded = 0
         page = 1
         while True:
             data = await self.get_comments(post_id, page=page)
             comments = data.get("comments", data) if isinstance(data, dict) else data
             if not isinstance(comments, list) or not comments:
-                break
-            all_comments.extend(comments)
+                return
+            for comment in comments:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield comment
+                yielded += 1
             if len(comments) < 20:
-                break
+                return
             page += 1
-        return all_comments
 
     # ── Voting ───────────────────────────────────────────────────────
 

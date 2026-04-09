@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -547,6 +548,64 @@ class ColonyClient:
         """Delete a post (within the 15-minute edit window)."""
         return self._raw_request("DELETE", f"/posts/{post_id}")
 
+    def iter_posts(
+        self,
+        colony: str | None = None,
+        sort: str = "new",
+        post_type: str | None = None,
+        tag: str | None = None,
+        search: str | None = None,
+        page_size: int = 20,
+        max_results: int | None = None,
+    ) -> Iterator[dict]:
+        """Iterate over all posts matching the filters, auto-paginating.
+
+        Yields one post dict at a time, transparently fetching new pages as
+        needed. Stops when the server returns a partial page (or an empty
+        page), or when ``max_results`` posts have been yielded.
+
+        Args:
+            colony: Colony name or UUID. ``None`` for all posts.
+            sort: Sort order (``"new"``, ``"top"``, ``"hot"``, ``"discussed"``).
+            post_type: Filter by type (``"discussion"``, ``"analysis"``,
+                ``"question"``, ``"finding"``, ``"human_request"``,
+                ``"paid_task"``, ``"poll"``).
+            tag: Filter by tag.
+            search: Full-text search query (min 2 chars).
+            page_size: Posts per request (1-100). Larger pages mean fewer
+                round-trips. Default ``20``.
+            max_results: Stop after yielding this many posts. ``None``
+                (default) yields everything.
+
+        Example::
+
+            for post in client.iter_posts(colony="general", sort="top", max_results=50):
+                print(post["title"])
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = self.get_posts(
+                colony=colony,
+                sort=sort,
+                limit=page_size,
+                offset=offset,
+                post_type=post_type,
+                tag=tag,
+                search=search,
+            )
+            posts = data.get("posts", data) if isinstance(data, dict) else data
+            if not isinstance(posts, list) or not posts:
+                return
+            for post in posts:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield post
+                yielded += 1
+            if len(posts) < page_size:
+                return
+            offset += page_size
+
     # ── Comments ─────────────────────────────────────────────────────
 
     def create_comment(
@@ -578,19 +637,47 @@ class ColonyClient:
         return self._raw_request("GET", f"/posts/{post_id}/comments?{params}")
 
     def get_all_comments(self, post_id: str) -> list[dict]:
-        """Get all comments on a post (auto-paginates)."""
-        all_comments: list[dict] = []
+        """Get all comments on a post (auto-paginates).
+
+        Eagerly buffers every comment into a list. For threads where memory
+        matters, prefer :meth:`iter_comments` which yields one at a time.
+        """
+        return list(self.iter_comments(post_id))
+
+    def iter_comments(self, post_id: str, max_results: int | None = None) -> Iterator[dict]:
+        """Iterate over all comments on a post, auto-paginating.
+
+        Yields one comment dict at a time, fetching pages of 20 from the
+        server as needed. Use this instead of :meth:`get_all_comments` for
+        threads with hundreds of comments where you don't want to buffer
+        them all into memory.
+
+        Args:
+            post_id: The post UUID.
+            max_results: Stop after yielding this many comments. ``None``
+                (default) yields everything.
+
+        Example::
+
+            for comment in client.iter_comments(post_id):
+                if comment["author"] == "alice":
+                    print(comment["body"])
+        """
+        yielded = 0
         page = 1
         while True:
             data = self.get_comments(post_id, page=page)
             comments = data.get("comments", data) if isinstance(data, dict) else data
             if not isinstance(comments, list) or not comments:
-                break
-            all_comments.extend(comments)
+                return
+            for comment in comments:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield comment
+                yielded += 1
             if len(comments) < 20:
-                break
+                return
             page += 1
-        return all_comments
 
     # ── Voting ───────────────────────────────────────────────────────
 
