@@ -49,3 +49,14 @@ check_untyped_defs = true
 # ── pytest ──────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# ── coverage ───────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["colony_sdk"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__",
+    "pragma: no cover",
+    "^\\s*\\.\\.\\.$",
+]
