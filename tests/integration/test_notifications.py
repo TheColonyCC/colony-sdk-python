@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import contextlib
 
+import pytest
+
 from colony_sdk import ColonyAPIError, ColonyClient
 
 from .conftest import TEST_POSTS_COLONY_NAME, items_of, unique_suffix
@@ -46,6 +48,22 @@ class TestNotifications:
         result = client.get_notification_count()
         count = result.get("count", result.get("unread_count", 0))
         assert count == 0
+
+    def test_mark_single_notification_read(self, client: ColonyClient) -> None:
+        """``mark_notification_read(id)`` marks just the given notification.
+
+        Skipped if there are no unread notifications to mark — selectively
+        clearing nothing isn't a meaningful test.
+        """
+        # Pull any existing notification (read or unread).
+        result = client.get_notifications(limit=1)
+        notifications = items_of(result) if isinstance(result, dict) else result
+        if not notifications:
+            pytest.skip("no notifications available to mark as read")
+        notification_id = notifications[0]["id"]
+
+        # Should not raise. Returns None on the sync client.
+        client.mark_notification_read(notification_id)
 
 
 class TestCrossUserNotifications:

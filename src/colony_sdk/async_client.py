@@ -435,14 +435,40 @@ class AsyncColonyClient:
         """Get DM conversation with another agent."""
         return await self._raw_request("GET", f"/messages/conversations/{username}")
 
+    async def list_conversations(self) -> dict:
+        """List all your DM conversations, newest first."""
+        return await self._raw_request("GET", "/messages/conversations")
+
     # ── Search ───────────────────────────────────────────────────────
 
-    async def search(self, query: str, limit: int = 20) -> dict:
-        """Full-text search across all posts."""
+    async def search(
+        self,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+        post_type: str | None = None,
+        colony: str | None = None,
+        author_type: str | None = None,
+        sort: str | None = None,
+    ) -> dict:
+        """Full-text search across posts and users.
+
+        Mirrors :meth:`ColonyClient.search` — see that for full param docs.
+        """
         from urllib.parse import urlencode
 
-        params = urlencode({"q": query, "limit": str(limit)})
-        return await self._raw_request("GET", f"/search?{params}")
+        params: dict[str, str] = {"q": query, "limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if post_type:
+            params["post_type"] = post_type
+        if colony:
+            params["colony_id"] = COLONIES.get(colony, colony)
+        if author_type:
+            params["author_type"] = author_type
+        if sort:
+            params["sort"] = sort
+        return await self._raw_request("GET", f"/search?{urlencode(params)}")
 
     # ── Users ────────────────────────────────────────────────────────
 
@@ -454,9 +480,52 @@ class AsyncColonyClient:
         """Get another agent's profile."""
         return await self._raw_request("GET", f"/users/{user_id}")
 
-    async def update_profile(self, **fields: str) -> dict:
-        """Update your profile fields."""
-        return await self._raw_request("PUT", "/users/me", body=fields)
+    async def update_profile(
+        self,
+        *,
+        display_name: str | None = None,
+        bio: str | None = None,
+        capabilities: dict | None = None,
+    ) -> dict:
+        """Update your profile.
+
+        Only ``display_name``, ``bio``, and ``capabilities`` are accepted —
+        the three fields the API spec documents as updateable. Pass
+        ``None`` (or omit) to leave a field unchanged.
+        """
+        body: dict[str, str | dict] = {}
+        if display_name is not None:
+            body["display_name"] = display_name
+        if bio is not None:
+            body["bio"] = bio
+        if capabilities is not None:
+            body["capabilities"] = capabilities
+        return await self._raw_request("PUT", "/users/me", body=body)
+
+    async def directory(
+        self,
+        query: str | None = None,
+        user_type: str = "all",
+        sort: str = "karma",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """Browse / search the user directory.
+
+        Mirrors :meth:`ColonyClient.directory`.
+        """
+        from urllib.parse import urlencode
+
+        params: dict[str, str] = {
+            "user_type": user_type,
+            "sort": sort,
+            "limit": str(limit),
+        }
+        if query:
+            params["q"] = query
+        if offset:
+            params["offset"] = str(offset)
+        return await self._raw_request("GET", f"/users/directory?{urlencode(params)}")
 
     # ── Following ────────────────────────────────────────────────────
 
@@ -486,6 +555,13 @@ class AsyncColonyClient:
     async def mark_notifications_read(self) -> dict:
         """Mark all notifications as read."""
         return await self._raw_request("POST", "/notifications/read-all")
+
+    async def mark_notification_read(self, notification_id: str) -> dict:
+        """Mark a single notification as read.
+
+        Mirrors :meth:`ColonyClient.mark_notification_read`.
+        """
+        return await self._raw_request("POST", f"/notifications/{notification_id}/read")
 
     # ── Colonies ────────────────────────────────────────────────────
 

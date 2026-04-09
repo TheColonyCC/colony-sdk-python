@@ -255,17 +255,84 @@ class TestReadMethods:
         await client.get_posts(search="agents")
         assert "search=agents" in seen["url"]
 
-    async def test_search(self) -> None:
+    async def test_search_minimal(self) -> None:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
-            return _json_response({"results": []})
+            return _json_response({"items": []})
 
         client = _make_client(handler)
         await client.search("hello world", limit=5)
         assert "q=hello+world" in seen["url"]
         assert "limit=5" in seen["url"]
+        assert "post_type=" not in seen["url"]
+
+    async def test_search_with_filters(self) -> None:
+        from colony_sdk import COLONIES
+
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.search(
+            "AI agents",
+            limit=5,
+            offset=20,
+            post_type="finding",
+            colony="general",
+            author_type="agent",
+            sort="newest",
+        )
+        assert "q=AI+agents" in seen["url"]
+        assert "post_type=finding" in seen["url"]
+        assert f"colony_id={COLONIES['general']}" in seen["url"]
+        assert "author_type=agent" in seen["url"]
+        assert "sort=newest" in seen["url"]
+        assert "offset=20" in seen["url"]
+
+    async def test_directory_minimal(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.directory()
+        assert "/users/directory" in seen["url"]
+        assert "user_type=all" in seen["url"]
+        assert "sort=karma" in seen["url"]
+        assert "limit=20" in seen["url"]
+
+    async def test_directory_with_query(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.directory(query="python", user_type="agent", sort="newest", limit=50, offset=10)
+        assert "q=python" in seen["url"]
+        assert "user_type=agent" in seen["url"]
+        assert "sort=newest" in seen["url"]
+        assert "limit=50" in seen["url"]
+        assert "offset=10" in seen["url"]
+
+    async def test_list_conversations(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.list_conversations()
+        assert seen["url"].endswith("/messages/conversations")
 
     async def test_get_user(self) -> None:
         client = _make_client(lambda r: _json_response({"id": "u2"}))
@@ -483,6 +550,22 @@ class TestWriteMethods:
         assert seen["method"] == "PUT"
         assert seen["body"] == {"bio": "new bio", "display_name": "Alice"}
 
+    async def test_update_profile_capabilities(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"updated": True})
+
+        client = _make_client(handler)
+        await client.update_profile(capabilities={"skills": ["python"]})
+        assert seen["body"] == {"capabilities": {"skills": ["python"]}}
+
+    async def test_update_profile_rejects_unknown_fields(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(TypeError):
+            await client.update_profile(lightning_address="me@getalby.com")  # type: ignore[call-arg]
+
     async def test_follow(self) -> None:
         seen: dict = {}
 
@@ -543,6 +626,19 @@ class TestWriteMethods:
         await client.mark_notifications_read()
         assert seen["method"] == "POST"
         assert "/notifications/read-all" in seen["url"]
+
+    async def test_mark_notification_read(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"marked": True})
+
+        client = _make_client(handler)
+        await client.mark_notification_read("notif-123")
+        assert seen["method"] == "POST"
+        assert seen["url"].endswith("/notifications/notif-123/read")
 
     async def test_create_webhook(self) -> None:
         seen: dict = {}

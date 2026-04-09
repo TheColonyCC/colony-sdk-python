@@ -635,6 +635,17 @@ class TestMessaging:
         req = _last_request(mock_urlopen)
         assert req.full_url == f"{BASE}/messages/unread-count"
 
+    @patch("colony_sdk.client.urlopen")
+    def test_list_conversations(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.list_conversations()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/conversations"
+
 
 # ---------------------------------------------------------------------------
 # Search
@@ -643,8 +654,8 @@ class TestMessaging:
 
 class TestSearch:
     @patch("colony_sdk.client.urlopen")
-    def test_search(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"posts": []})
+    def test_search_minimal(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
         client = _authed_client()
 
         client.search("AI agents", limit=10)
@@ -653,6 +664,47 @@ class TestSearch:
         assert req.get_method() == "GET"
         assert "q=AI+agents" in req.full_url
         assert "limit=10" in req.full_url
+        # Optional params should be absent when unset.
+        assert "post_type=" not in req.full_url
+        assert "colony_id=" not in req.full_url
+        assert "author_type=" not in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_with_all_filters(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.search(
+            "AI agents",
+            limit=5,
+            offset=20,
+            post_type="finding",
+            colony="general",
+            author_type="agent",
+            sort="newest",
+        )
+
+        req = _last_request(mock_urlopen)
+        assert "q=AI+agents" in req.full_url
+        assert "limit=5" in req.full_url
+        assert "offset=20" in req.full_url
+        assert "post_type=finding" in req.full_url
+        # colony="general" should resolve to its UUID via COLONIES.
+        assert f"colony_id={COLONIES['general']}" in req.full_url
+        assert "author_type=agent" in req.full_url
+        assert "sort=newest" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_colony_uuid_passes_through(self, mock_urlopen: MagicMock) -> None:
+        """Passing a UUID for ``colony=`` should not be re-mapped."""
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        uuid = "00000000-1111-2222-3333-444444444444"
+
+        client.search("test", colony=uuid)
+
+        req = _last_request(mock_urlopen)
+        assert f"colony_id={uuid}" in req.full_url
 
 
 # ---------------------------------------------------------------------------
@@ -683,17 +735,82 @@ class TestUsers:
         assert req.full_url == f"{BASE}/users/u2"
 
     @patch("colony_sdk.client.urlopen")
-    def test_update_profile(self, mock_urlopen: MagicMock) -> None:
+    def test_update_profile_bio(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "u1"})
         client = _authed_client()
 
-        client.update_profile(bio="New bio", lightning_address="me@getalby.com")
+        client.update_profile(bio="New bio")
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "PUT"
         assert req.full_url == f"{BASE}/users/me"
+        assert _last_body(mock_urlopen) == {"bio": "New bio"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_profile_all_fields(self, mock_urlopen: MagicMock) -> None:
+        """All three updateable fields can be sent at once."""
+        mock_urlopen.return_value = _mock_response({"id": "u1"})
+        client = _authed_client()
+
+        client.update_profile(
+            display_name="New Name",
+            bio="New bio",
+            capabilities={"skills": ["python", "research"]},
+        )
+
+        assert _last_body(mock_urlopen) == {
+            "display_name": "New Name",
+            "bio": "New bio",
+            "capabilities": {"skills": ["python", "research"]},
+        }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_profile_omits_none_fields(self, mock_urlopen: MagicMock) -> None:
+        """``None`` fields are omitted from the body, not sent as null."""
+        mock_urlopen.return_value = _mock_response({"id": "u1"})
+        client = _authed_client()
+
+        client.update_profile(bio="Only bio")
+
         body = _last_body(mock_urlopen)
-        assert body == {"bio": "New bio", "lightning_address": "me@getalby.com"}
+        assert "display_name" not in body
+        assert "capabilities" not in body
+        assert body == {"bio": "Only bio"}
+
+    def test_update_profile_rejects_unknown_fields(self) -> None:
+        """The whitelist replaces the previous ``**fields`` catch-all."""
+        client = _authed_client()
+        with pytest.raises(TypeError):
+            client.update_profile(lightning_address="me@getalby.com")  # type: ignore[call-arg]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_directory_minimal(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.directory()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url.startswith(f"{BASE}/users/directory?")
+        # Default user_type=all, sort=karma, limit=20
+        assert "user_type=all" in req.full_url
+        assert "sort=karma" in req.full_url
+        assert "limit=20" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_directory_with_query_and_filters(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.directory(query="python", user_type="agent", sort="newest", limit=50, offset=10)
+
+        req = _last_request(mock_urlopen)
+        assert "q=python" in req.full_url
+        assert "user_type=agent" in req.full_url
+        assert "sort=newest" in req.full_url
+        assert "limit=50" in req.full_url
+        assert "offset=10" in req.full_url
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +889,18 @@ class TestNotifications:
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/notifications/read-all"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_notification_read(self, mock_urlopen: MagicMock) -> None:
+        """Single-notification mark-as-read posts to /notifications/{id}/read."""
+        mock_urlopen.return_value = _mock_response("")
+        client = _authed_client()
+
+        client.mark_notification_read("notif-123")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/notifications/notif-123/read"
 
 
 # ---------------------------------------------------------------------------

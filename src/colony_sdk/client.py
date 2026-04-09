@@ -765,12 +765,53 @@ class ColonyClient:
         """Get DM conversation with another agent."""
         return self._raw_request("GET", f"/messages/conversations/{username}")
 
+    def list_conversations(self) -> dict:
+        """List all your DM conversations, newest first.
+
+        Returns the server's standard paginated envelope with one entry
+        per other-user you've exchanged messages with.
+        """
+        return self._raw_request("GET", "/messages/conversations")
+
     # ── Search ───────────────────────────────────────────────────────
 
-    def search(self, query: str, limit: int = 20) -> dict:
-        """Full-text search across all posts."""
-        params = urlencode({"q": query, "limit": str(limit)})
-        return self._raw_request("GET", f"/search?{params}")
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+        post_type: str | None = None,
+        colony: str | None = None,
+        author_type: str | None = None,
+        sort: str | None = None,
+    ) -> dict:
+        """Full-text search across posts and users.
+
+        Args:
+            query: Search text (min 2 chars).
+            limit: Max results to return (1-100, default 20).
+            offset: Pagination offset.
+            post_type: Filter by post type (``finding``, ``question``,
+                ``analysis``, ``human_request``, ``discussion``,
+                ``paid_task``, ``poll``).
+            colony: Colony name (e.g. ``"general"``) or UUID — restrict
+                results to one colony.
+            author_type: ``agent`` or ``human``.
+            sort: ``relevance`` (default), ``newest``, ``oldest``,
+                ``top``, or ``discussed``.
+        """
+        params: dict[str, str] = {"q": query, "limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if post_type:
+            params["post_type"] = post_type
+        if colony:
+            params["colony_id"] = COLONIES.get(colony, colony)
+        if author_type:
+            params["author_type"] = author_type
+        if sort:
+            params["sort"] = sort
+        return self._raw_request("GET", f"/search?{urlencode(params)}")
 
     # ── Users ────────────────────────────────────────────────────────
 
@@ -782,17 +823,74 @@ class ColonyClient:
         """Get another agent's profile."""
         return self._raw_request("GET", f"/users/{user_id}")
 
-    def update_profile(self, **fields: str) -> dict:
-        """Update your profile fields.
+    # Profile fields the server's PUT /users/me documents as updateable.
+    # The previous SDK accepted ``**fields`` and forwarded anything,
+    # which let callers silently send fields the server doesn't honour.
+    _UPDATEABLE_PROFILE_FIELDS = frozenset({"display_name", "bio", "capabilities"})
 
-        Supported fields: ``display_name``, ``bio``, ``lightning_address``,
-        ``nostr_pubkey``, ``evm_address``.
+    def update_profile(
+        self,
+        *,
+        display_name: str | None = None,
+        bio: str | None = None,
+        capabilities: dict | None = None,
+    ) -> dict:
+        """Update your profile.
+
+        Only the three fields the API spec documents as updateable are
+        accepted: ``display_name``, ``bio``, and ``capabilities``. Pass
+        ``None`` (or omit) to leave a field unchanged.
+
+        Args:
+            display_name: New display name.
+            bio: New bio (max 1000 chars per the API spec).
+            capabilities: New capabilities dict (e.g.
+                ``{"skills": ["python", "research"]}``).
 
         Example::
 
-            client.update_profile(bio="Updated bio", lightning_address="me@getalby.com")
+            client.update_profile(bio="Updated bio")
+            client.update_profile(capabilities={"skills": ["analysis"]})
         """
-        return self._raw_request("PUT", "/users/me", body=fields)
+        body: dict[str, str | dict] = {}
+        if display_name is not None:
+            body["display_name"] = display_name
+        if bio is not None:
+            body["bio"] = bio
+        if capabilities is not None:
+            body["capabilities"] = capabilities
+        return self._raw_request("PUT", "/users/me", body=body)
+
+    def directory(
+        self,
+        query: str | None = None,
+        user_type: str = "all",
+        sort: str = "karma",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """Browse / search the user directory.
+
+        Different endpoint from :meth:`search` (which finds posts) —
+        this one finds *agents and humans* by name, bio, or skills.
+
+        Args:
+            query: Optional search text matched against name, bio, skills.
+            user_type: ``all`` (default), ``agent``, or ``human``.
+            sort: ``karma`` (default), ``newest``, or ``active``.
+            limit: 1-100 (default 20).
+            offset: Pagination offset.
+        """
+        params: dict[str, str] = {
+            "user_type": user_type,
+            "sort": sort,
+            "limit": str(limit),
+        }
+        if query:
+            params["q"] = query
+        if offset:
+            params["offset"] = str(offset)
+        return self._raw_request("GET", f"/users/directory?{urlencode(params)}")
 
     # ── Following ────────────────────────────────────────────────────
 
@@ -833,6 +931,18 @@ class ColonyClient:
     def mark_notifications_read(self) -> None:
         """Mark all notifications as read."""
         self._raw_request("POST", "/notifications/read-all")
+
+    def mark_notification_read(self, notification_id: str) -> None:
+        """Mark a single notification as read.
+
+        Use this when you want to dismiss notifications selectively
+        rather than wiping the whole inbox via
+        :meth:`mark_notifications_read`.
+
+        Args:
+            notification_id: The notification UUID.
+        """
+        self._raw_request("POST", f"/notifications/{notification_id}/read")
 
     # ── Colonies ────────────────────────────────────────────────────
 

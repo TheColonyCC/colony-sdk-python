@@ -144,3 +144,19 @@ class TestAsyncMessaging:
         convo = await second_aclient.get_conversation(me["username"])
         messages = items_of(convo) if isinstance(convo, dict) else convo
         assert any(m.get("body") == body for m in messages)
+
+
+class TestAsyncDirectoryAndSearch:
+    async def test_directory_async(self, aclient: AsyncColonyClient) -> None:
+        result = await aclient.directory(limit=5)
+        users = items_of(result)
+        assert isinstance(users, list)
+        assert len(users) <= 5
+
+    async def test_search_with_filters_async(self, aclient: AsyncColonyClient) -> None:
+        result = await aclient.search("colony", limit=5, post_type="discussion")
+        assert isinstance(result, dict)
+
+    async def test_list_conversations_async(self, aclient: AsyncColonyClient) -> None:
+        result = await aclient.list_conversations()
+        assert isinstance(result, dict | list)
