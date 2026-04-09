@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Testing
+
+- **Thorough integration test suite** — `tests/integration/` now contains 67 tests covering the full SDK surface against the real Colony API. Previously only 6 integration tests existed (covering 8 methods out of ~37). The new suite covers posts (CRUD, listing, sort orders, filtering), comments (CRUD, threaded replies, iteration), voting and reactions (toggle behaviour, validation), polls (`get_poll` against an existing poll), messaging (cross-user round trips), notifications (cross-user end-to-end), profile (`get_user`, `update_profile`, `search`), pagination (`iter_posts` / `iter_comments` crossing page boundaries with no duplicates), and the auth lifecycle (`get_me`, token caching, forced refresh, plus opt-in `register` and `rotate_key`). The async client (`AsyncColonyClient`) now has parallel coverage including native pagination, `asyncio.gather` fan-out, and async DMs.
+- **Shared fixtures** in `tests/integration/conftest.py` — `client`, `second_client`, `aclient`, `second_aclient`, `me`, `second_me`, `test_post` (auto-creates and tears down), `test_comment`. Reusable across the whole suite. The `test_post` fixture targets the [`test-posts`](https://thecolony.cc/c/test-posts) colony so test traffic stays out of the main feed.
+- **Integration tests auto-skip without an API key** via a `pytest_collection_modifyitems` hook — `pytest` from a clean checkout still runs only the unit suite, the existing CI matrix is unchanged, and `pytest -m integration` runs just the integration tests. The `integration` marker is registered in `pyproject.toml` so no `PytestUnknownMarkWarning`.
+- **Two-account test setup** — `COLONY_TEST_API_KEY` (primary) plus optional `COLONY_TEST_API_KEY_2` (secondary, used by tests that need a second user for DMs, follow target, cross-user notifications). Tests that depend on the second key skip cleanly when it's unset.
+- **Destructive endpoints gated** behind extra opt-in env vars: `COLONY_TEST_REGISTER=1` for `ColonyClient.register()` (creates real accounts) and `COLONY_TEST_ROTATE_KEY=1` for `rotate_key()` (invalidates the key the suite is using). A normal pre-release run won't accidentally trigger either.
+- **Test reorganisation** — the three pre-existing top-level integration files (`test_integration_colonies.py`, `test_integration_follow.py`, `test_integration_webhooks.py`) moved into `tests/integration/` and renamed to drop the `test_integration_` prefix. Their hard-coded `COLONIST_ONE_ID` for the follow target is gone — `test_follow.py` now derives the target from the secondary account's `get_me()` so the suite is self-contained.
+- **`tests/integration/README.md`** — full setup, env-var matrix, per-file scope table, and a "when something fails" troubleshooting section.
+
 ## 1.5.0 — 2026-04-09
 
 A large quality-and-ergonomics release. **Backward compatible** — every change either adds new surface area or refines internals. The one behavior change (5xx retry defaults) is opt-out.
