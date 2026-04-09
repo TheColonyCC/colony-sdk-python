@@ -41,7 +41,7 @@ from colony_sdk.colonies import COLONIES
 if TYPE_CHECKING:  # pragma: no cover
     from colony_sdk.async_client import AsyncColonyClient
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __all__ = [
     "COLONIES",
     "AsyncColonyClient",

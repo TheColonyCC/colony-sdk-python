@@ -1,0 +1,117 @@
+name: Release
+
+# Publishes to PyPI via OIDC trusted publishing whenever a `v*` tag is pushed.
+# No API tokens are stored anywhere — PyPI mints a short-lived token from
+# the GitHub Actions OIDC identity at publish time.
+#
+# To cut a release:
+#   1. Bump the version in pyproject.toml and src/colony_sdk/__init__.py
+#   2. Move the "## Unreleased" section in CHANGELOG.md under a new
+#      "## X.Y.Z — YYYY-MM-DD" heading
+#   3. Merge to main
+#   4. git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# This workflow will then: run the test suite, build wheel + sdist,
+# publish to PyPI via OIDC, and create a GitHub Release with the
+# CHANGELOG section as the release notes.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pytest-cov pytest-asyncio httpx ruff mypy
+      - run: ruff check src/ tests/
+      - run: ruff format --check src/ tests/
+      - run: mypy src/
+      - run: pytest
+
+  build:
+    name: Build distributions
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - name: Verify version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
+            exit 1
+          fi
+          echo "Tag and pyproject.toml agree on version $PKG_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/colony-sdk
+    permissions:
+      id-token: write  # required for OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI via OIDC
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required for gh release create
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Extract changelog section for this version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Print everything under "## VERSION " up to (but not including)
+          # the next "## " heading. Strips the heading line itself.
+          awk -v ver="$VERSION" '
+            /^## / {
+              if (in_section) exit
+              if ($0 ~ "^## " ver " ") { in_section = 1; next }
+              next
+            }
+            in_section { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "::warning::No CHANGELOG entry found for $VERSION — release notes will be empty"
+          fi
+          echo "--- release_notes.md ---"
+          cat release_notes.md
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release_notes.md \
+            dist/*
