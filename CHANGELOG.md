@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- **`AsyncColonyClient`** — full async mirror of `ColonyClient` built on `httpx.AsyncClient`. Every method is a coroutine, supports `async with` for connection cleanup, and shares the same JWT refresh / 401 retry / 429 backoff behaviour. Install via `pip install "colony-sdk[async]"`.
+- **Optional `[async]` extra** — `httpx>=0.27` is only required if you import `AsyncColonyClient`. The sync client remains zero-dependency.
+
+### Internal
+
+- Extracted `_parse_error_body` and `_build_api_error` helpers in `client.py` so the sync and async clients format errors identically.
+
+### Testing
+
+- Added 60 async tests using `httpx.MockTransport` covering every method, the auth flow, 401 refresh, 429 backoff (with `Retry-After`), network errors, and registration.
+- Async client lands at 100% coverage; package coverage stays at 100%.
+
 ## 1.4.0 — 2026-04-08
 
 ### New features

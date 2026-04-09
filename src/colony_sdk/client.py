@@ -2,7 +2,9 @@
 Colony API client.
 
 Handles JWT authentication, automatic token refresh, retry on 401/429,
-and all core API operations. Zero external dependencies — uses urllib only.
+and all core API operations. The synchronous client uses urllib only and
+has zero external dependencies. For async, see :class:`AsyncColonyClient`
+in :mod:`colony_sdk.async_client` (requires ``pip install colony-sdk[async]``).
 """
 
 from __future__ import annotations
@@ -40,6 +42,43 @@ class ColonyAPIError(Exception):
         self.status = status
         self.response = response or {}
         self.code = code
+
+
+def _parse_error_body(raw: str) -> dict:
+    """Parse a non-2xx response body into a dict (or empty dict if not JSON)."""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _build_api_error(
+    status: int,
+    raw_body: str,
+    fallback: str,
+    message_prefix: str,
+) -> ColonyAPIError:
+    """Construct a ColonyAPIError from a non-2xx response.
+
+    Shared between the sync and async clients so the error format is identical.
+    ``message_prefix`` is the human-readable context (e.g.
+    ``"Colony API error (POST /posts)"`` or ``"Registration failed"``).
+    """
+    data = _parse_error_body(raw_body)
+    detail = data.get("detail")
+    if isinstance(detail, dict):
+        msg = detail.get("message", fallback)
+        error_code = detail.get("code")
+    else:
+        msg = detail or data.get("error") or fallback
+        error_code = None
+    return ColonyAPIError(
+        f"{message_prefix}: {msg}",
+        status=status,
+        response=data,
+        code=error_code,
+    )
 
 
 class ColonyClient:
@@ -126,10 +165,6 @@ class ColonyClient:
                 return json.loads(raw) if raw else {}
         except HTTPError as e:
             resp_body = e.read().decode()
-            try:
-                data = json.loads(resp_body)
-            except (json.JSONDecodeError, ValueError):
-                data = {}
 
             # Auto-refresh on 401, retry once
             if e.code == 401 and _retry == 0 and auth:
@@ -144,18 +179,11 @@ class ColonyClient:
                 time.sleep(delay)
                 return self._raw_request(method, path, body, auth, _retry=_retry + 1)
 
-            detail = data.get("detail")
-            if isinstance(detail, dict):
-                msg = detail.get("message", str(e))
-                error_code = detail.get("code")
-            else:
-                msg = detail or data.get("error") or str(e)
-                error_code = None
-            raise ColonyAPIError(
-                f"Colony API error ({method} {path}): {msg}",
-                status=e.code,
-                response=data,
-                code=error_code,
+            raise _build_api_error(
+                e.code,
+                resp_body,
+                fallback=str(e),
+                message_prefix=f"Colony API error ({method} {path})",
             ) from e
 
     # ── Posts ─────────────────────────────────────────────────────────
@@ -532,20 +560,9 @@ class ColonyClient:
                 return json.loads(resp.read().decode())
         except HTTPError as e:
             resp_body = e.read().decode()
-            try:
-                data = json.loads(resp_body)
-            except (json.JSONDecodeError, ValueError):
-                data = {}
-            detail = data.get("detail")
-            if isinstance(detail, dict):
-                msg = detail.get("message", str(e))
-                error_code = detail.get("code")
-            else:
-                msg = detail or data.get("error") or str(e)
-                error_code = None
-            raise ColonyAPIError(
-                f"Registration failed: {msg}",
-                status=e.code,
-                response=data,
-                code=error_code,
+            raise _build_api_error(
+                e.code,
+                resp_body,
+                fallback=str(e),
+                message_prefix="Registration failed",
             ) from e
