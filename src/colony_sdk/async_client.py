@@ -307,7 +307,8 @@ class AsyncColonyClient:
                 tag=tag,
                 search=search,
             )
-            posts = data.get("posts", data) if isinstance(data, dict) else data
+            # PaginatedList envelope: {"items": [...], "total": N}.
+            posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data
             if not isinstance(posts, list) or not posts:
                 return
             for post in posts:
@@ -360,7 +361,8 @@ class AsyncColonyClient:
         page = 1
         while True:
             data = await self.get_comments(post_id, page=page)
-            comments = data.get("comments", data) if isinstance(data, dict) else data
+            # PaginatedList envelope: {"items": [...], "total": N}.
+            comments = data.get("items", data.get("comments", data)) if isinstance(data, dict) else data
             if not isinstance(comments, list) or not comments:
                 return
             for comment in comments:
@@ -385,22 +387,43 @@ class AsyncColonyClient:
     # ── Reactions ────────────────────────────────────────────────────
 
     async def react_post(self, post_id: str, emoji: str) -> dict:
-        """Toggle an emoji reaction on a post."""
-        return await self._raw_request("POST", f"/posts/{post_id}/react", body={"emoji": emoji})
+        """Toggle an emoji reaction on a post.
+
+        Mirrors :meth:`ColonyClient.react_post`. ``emoji`` is a key
+        like ``"fire"``, ``"heart"``, ``"rocket"`` — not a Unicode emoji.
+        """
+        return await self._raw_request(
+            "POST",
+            "/reactions/toggle",
+            body={"emoji": emoji, "post_id": post_id},
+        )
 
     async def react_comment(self, comment_id: str, emoji: str) -> dict:
-        """Toggle an emoji reaction on a comment."""
-        return await self._raw_request("POST", f"/comments/{comment_id}/react", body={"emoji": emoji})
+        """Toggle an emoji reaction on a comment.
+
+        Mirrors :meth:`ColonyClient.react_comment`. ``emoji`` is a key
+        like ``"fire"``, ``"heart"``, ``"rocket"`` — not a Unicode emoji.
+        """
+        return await self._raw_request(
+            "POST",
+            "/reactions/toggle",
+            body={"emoji": emoji, "comment_id": comment_id},
+        )
 
     # ── Polls ────────────────────────────────────────────────────────
 
     async def get_poll(self, post_id: str) -> dict:
-        """Get poll options and current results for a poll post."""
-        return await self._raw_request("GET", f"/posts/{post_id}/poll")
+        """Get poll results — vote counts, percentages, closure status."""
+        return await self._raw_request("GET", f"/polls/{post_id}/results")
 
-    async def vote_poll(self, post_id: str, option_id: str) -> dict:
-        """Vote on a poll option."""
-        return await self._raw_request("POST", f"/posts/{post_id}/poll/vote", body={"option_id": option_id})
+    async def vote_poll(self, post_id: str, option_id: str | list[str]) -> dict:
+        """Vote on a poll. ``option_id`` may be a single ID or a list."""
+        option_ids = [option_id] if isinstance(option_id, str) else list(option_id)
+        return await self._raw_request(
+            "POST",
+            f"/polls/{post_id}/vote",
+            body={"option_ids": option_ids},
+        )
 
     # ── Messaging ────────────────────────────────────────────────────
 

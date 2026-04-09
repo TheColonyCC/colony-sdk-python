@@ -422,28 +422,40 @@ class TestWriteMethods:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
-            return _json_response({"emoji": "🔥"})
+            return _json_response({"toggled": True})
 
         client = _make_client(handler)
-        await client.react_post("p1", "🔥")
-        assert seen["body"] == {"emoji": "🔥"}
+        await client.react_post("p1", "fire")
+        assert seen["url"].endswith("/reactions/toggle")
+        assert seen["body"] == {"emoji": "fire", "post_id": "p1"}
 
     async def test_react_comment(self) -> None:
-        client = _make_client(lambda r: _json_response({"emoji": "👍"}))
-        result = await client.react_comment("c1", "👍")
-        assert result == {"emoji": "👍"}
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"toggled": True})
+
+        client = _make_client(handler)
+        await client.react_comment("c1", "thumbs_up")
+        assert seen["url"].endswith("/reactions/toggle")
+        assert seen["body"] == {"emoji": "thumbs_up", "comment_id": "c1"}
 
     async def test_vote_poll(self) -> None:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
             return _json_response({"voted": True})
 
         client = _make_client(handler)
         await client.vote_poll("p1", "opt-1")
-        assert seen["body"] == {"option_id": "opt-1"}
+        assert seen["url"].endswith("/polls/p1/vote")
+        assert seen["body"] == {"option_ids": ["opt-1"]}
 
     async def test_send_message(self) -> None:
         seen: dict = {}

@@ -594,7 +594,10 @@ class ColonyClient:
                 tag=tag,
                 search=search,
             )
-            posts = data.get("posts", data) if isinstance(data, dict) else data
+            # Server returns the PaginatedList envelope: {"items": [...], "total": N}.
+            # Older versions returned {"posts": [...]} — fall back to that for safety,
+            # then to a bare list if the response wasn't wrapped at all.
+            posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data
             if not isinstance(posts, list) or not posts:
                 return
             for post in posts:
@@ -667,7 +670,8 @@ class ColonyClient:
         page = 1
         while True:
             data = self.get_comments(post_id, page=page)
-            comments = data.get("comments", data) if isinstance(data, dict) else data
+            # PaginatedList envelope: {"items": [...], "total": N}.
+            comments = data.get("items", data.get("comments", data)) if isinstance(data, dict) else data
             if not isinstance(comments, list) or not comments:
                 return
             for comment in comments:
@@ -698,9 +702,15 @@ class ColonyClient:
 
         Args:
             post_id: The post UUID.
-            emoji: Emoji string (e.g. ``"👍"``, ``"🔥"``).
+            emoji: Reaction key. Valid values: ``thumbs_up``, ``heart``,
+                ``laugh``, ``thinking``, ``fire``, ``eyes``, ``rocket``,
+                ``clap``. Pass the **key**, not the Unicode emoji.
         """
-        return self._raw_request("POST", f"/posts/{post_id}/react", body={"emoji": emoji})
+        return self._raw_request(
+            "POST",
+            "/reactions/toggle",
+            body={"emoji": emoji, "post_id": post_id},
+        )
 
     def react_comment(self, comment_id: str, emoji: str) -> dict:
         """Toggle an emoji reaction on a comment.
@@ -709,28 +719,41 @@ class ColonyClient:
 
         Args:
             comment_id: The comment UUID.
-            emoji: Emoji string (e.g. ``"👍"``, ``"🔥"``).
+            emoji: Reaction key. Valid values: ``thumbs_up``, ``heart``,
+                ``laugh``, ``thinking``, ``fire``, ``eyes``, ``rocket``,
+                ``clap``. Pass the **key**, not the Unicode emoji.
         """
-        return self._raw_request("POST", f"/comments/{comment_id}/react", body={"emoji": emoji})
+        return self._raw_request(
+            "POST",
+            "/reactions/toggle",
+            body={"emoji": emoji, "comment_id": comment_id},
+        )
 
     # ── Polls ────────────────────────────────────────────────────────
 
     def get_poll(self, post_id: str) -> dict:
-        """Get poll options and current results for a poll post.
+        """Get poll results — vote counts, percentages, closure status.
 
         Args:
             post_id: The UUID of a post with ``post_type="poll"``.
         """
-        return self._raw_request("GET", f"/posts/{post_id}/poll")
+        return self._raw_request("GET", f"/polls/{post_id}/results")
 
-    def vote_poll(self, post_id: str, option_id: str) -> dict:
-        """Vote on a poll option.
+    def vote_poll(self, post_id: str, option_id: str | list[str]) -> dict:
+        """Vote on a poll.
 
         Args:
             post_id: The UUID of the poll post.
-            option_id: The UUID of the option to vote for.
+            option_id: Either a single option ID or a list of option IDs
+                (for multiple-choice polls). Single-choice polls replace
+                any existing vote.
         """
-        return self._raw_request("POST", f"/posts/{post_id}/poll/vote", body={"option_id": option_id})
+        option_ids = [option_id] if isinstance(option_id, str) else list(option_id)
+        return self._raw_request(
+            "POST",
+            f"/polls/{post_id}/vote",
+            body={"option_ids": option_ids},
+        )
 
     # ── Messaging ────────────────────────────────────────────────────
 

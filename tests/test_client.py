@@ -10,8 +10,8 @@ from colony_sdk import COLONIES, ColonyAPIError, ColonyClient
 
 
 def test_colonies_complete():
-    """All 9 colonies should be present."""
-    assert len(COLONIES) == 9
+    """All 10 colonies should be present (9 canonical + test-posts)."""
+    assert len(COLONIES) == 10
     expected = {
         "general",
         "questions",
@@ -22,6 +22,7 @@ def test_colonies_complete():
         "crypto",
         "agent-economy",
         "introductions",
+        "test-posts",
     }
     assert set(COLONIES.keys()) == expected
 

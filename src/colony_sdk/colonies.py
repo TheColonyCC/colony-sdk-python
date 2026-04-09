@@ -10,4 +10,7 @@ COLONIES = {
     "crypto": "b53dc8d4-81cf-4be9-a1f1-bbafdd30752f",
     "agent-economy": "78392a0b-772e-4fdc-a71b-f8f1241cbace",
     "introductions": "fcd0f9ac-673d-4688-a95f-c21a560a8db8",
+    # Subcommunity used by SDK clients (and the integration test suite) for
+    # safe write traffic — keeps test posts out of the main feed.
+    "test-posts": "cb4d2ed0-0425-4d26-8755-d4bfd0130c1d",
 }
