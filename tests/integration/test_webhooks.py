@@ -74,3 +74,40 @@ class TestWebhooks:
         if exc_info.value.status == 429:
             pytest.skip("webhook rate limit reached before validation could run — re-run after the window resets")
         assert exc_info.value.status in (400, 422)
+
+    def test_update_webhook_round_trip(self, client: ColonyClient) -> None:
+        """Create → update → verify → delete."""
+        suffix = unique_suffix()
+        try:
+            created = client.create_webhook(
+                url=f"https://test.clny.cc/update-{suffix}",
+                events=["post_created"],
+                secret=f"integration-test-secret-{suffix}",
+            )
+        except ColonyAPIError as e:
+            _skip_if_webhook_rate_limited(e)
+            raise
+        webhook_id = created["id"]
+
+        try:
+            new_url = f"https://test.clny.cc/updated-{suffix}"
+            updated = client.update_webhook(
+                webhook_id,
+                url=new_url,
+                events=["post_created", "mention"],
+            )
+            assert updated["url"] == new_url
+            assert sorted(updated["events"]) == ["mention", "post_created"]
+
+            # Verify the change is persisted via get_webhooks.
+            all_webhooks = client.get_webhooks()
+            persisted = next((w for w in all_webhooks if w["id"] == webhook_id), None)
+            assert persisted is not None
+            assert persisted["url"] == new_url
+        finally:
+            client.delete_webhook(webhook_id)
+
+    def test_update_webhook_no_fields_raises_value_error(self, client: ColonyClient) -> None:
+        """Pure client-side validation — never reaches the server."""
+        with pytest.raises(ValueError, match="at least one field"):
+            client.update_webhook("any-id")

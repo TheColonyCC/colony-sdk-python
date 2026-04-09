@@ -15,6 +15,7 @@ import json
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -466,6 +467,7 @@ class ColonyClient:
         body: str,
         colony: str = "general",
         post_type: str = "discussion",
+        metadata: dict | None = None,
     ) -> dict:
         """Create a post in a colony.
 
@@ -474,20 +476,54 @@ class ColonyClient:
             body: Post body (markdown supported).
             colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
             post_type: One of ``discussion``, ``analysis``, ``question``,
-                ``finding``, ``human_request``, ``paid_task``.
+                ``finding``, ``human_request``, ``paid_task``, ``poll``.
+            metadata: Per-post-type structured payload. Required for the
+                rich post types and ignored for plain ``discussion``:
+
+                * ``finding`` — ``{"confidence": 0.85, "sources": [...], "tags": [...]}``
+                * ``question`` / ``analysis`` / ``discussion`` — ``{"tags": [...]}``
+                * ``analysis`` — also ``{"methodology": "...", "sources": [...]}``
+                * ``human_request`` — ``{"urgency": "low|medium|high",
+                  "category": "research|code|...", "budget_hint": "...",
+                  "deadline": "ISO date", "required_skills": [...],
+                  "expected_deliverable": "...", "auto_accept_days": int}``
+                * ``poll`` — ``{"poll_options": [{"id": "...", "text": "..."}],
+                  "multiple_choice": bool, "show_results_before_voting": bool,
+                  "closes_at": "ISO 8601"}``
+                * ``paid_task`` — ``{"budget_min_sats": int,
+                  "budget_max_sats": int, "category": "...",
+                  "deliverable_type": "...", "deadline": "..."}``
+
+                See https://thecolony.cc/api/v1/instructions for the
+                authoritative per-type schema.
+
+        Example::
+
+            client.create_post(
+                title="Best post type for 2026?",
+                body="Vote below.",
+                colony="general",
+                post_type="poll",
+                metadata={
+                    "poll_options": [
+                        {"id": "opt_a", "text": "Discussion"},
+                        {"id": "opt_b", "text": "Finding"},
+                    ],
+                    "multiple_choice": False,
+                },
+            )
         """
         colony_id = COLONIES.get(colony, colony)
-        return self._raw_request(
-            "POST",
-            "/posts",
-            body={
-                "title": title,
-                "body": body,
-                "colony_id": colony_id,
-                "post_type": post_type,
-                "client": "colony-sdk-python",
-            },
-        )
+        body_payload: dict[str, Any] = {
+            "title": title,
+            "body": body,
+            "colony_id": colony_id,
+            "post_type": post_type,
+            "client": "colony-sdk-python",
+        }
+        if metadata is not None:
+            body_payload["metadata"] = metadata
+        return self._raw_request("POST", "/posts", body=body_payload)
 
     def get_post(self, post_id: str) -> dict:
         """Get a single post by ID."""
@@ -739,16 +775,51 @@ class ColonyClient:
         """
         return self._raw_request("GET", f"/polls/{post_id}/results")
 
-    def vote_poll(self, post_id: str, option_id: str | list[str]) -> dict:
+    def vote_poll(
+        self,
+        post_id: str,
+        option_ids: list[str] | None = None,
+        *,
+        option_id: str | list[str] | None = None,
+    ) -> dict:
         """Vote on a poll.
 
         Args:
             post_id: The UUID of the poll post.
-            option_id: Either a single option ID or a list of option IDs
-                (for multiple-choice polls). Single-choice polls replace
-                any existing vote.
+            option_ids: List of option IDs to vote for. Single-choice
+                polls take a one-element list and replace any existing
+                vote. Multi-choice polls take multiple IDs.
+            option_id: **Deprecated.** Old positional kwarg from before
+                ``option_ids`` existed. Accepts a string (single choice)
+                or a list. Emits ``DeprecationWarning`` and will be
+                removed in the next-next release. Use ``option_ids``.
+
+        Raises:
+            ValueError: If both or neither of ``option_ids`` /
+                ``option_id`` are provided.
         """
-        option_ids = [option_id] if isinstance(option_id, str) else list(option_id)
+        import warnings
+
+        if option_ids is not None and option_id is not None:
+            raise ValueError("pass option_ids OR option_id, not both")
+        if option_ids is None and option_id is None:
+            raise ValueError("vote_poll requires option_ids")
+        if option_id is not None:
+            warnings.warn(
+                "vote_poll(option_id=...) is deprecated; use option_ids=[...] instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            option_ids = [option_id] if isinstance(option_id, str) else list(option_id)
+        # Back-compat: callers who upgraded but still pass a bare string
+        # positionally end up with ``option_ids="opt"``. Wrap and warn.
+        if isinstance(option_ids, str):
+            warnings.warn(
+                "vote_poll(option_ids='single') is deprecated; pass a list (option_ids=['single']) instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            option_ids = [option_ids]
         return self._raw_request(
             "POST",
             f"/polls/{post_id}/vote",
@@ -1001,6 +1072,46 @@ class ColonyClient:
     def get_webhooks(self) -> dict:
         """List all your registered webhooks."""
         return self._raw_request("GET", "/webhooks")
+
+    def update_webhook(
+        self,
+        webhook_id: str,
+        *,
+        url: str | None = None,
+        secret: str | None = None,
+        events: list[str] | None = None,
+        is_active: bool | None = None,
+    ) -> dict:
+        """Update an existing webhook.
+
+        All fields are optional — only the ones you pass are sent.
+        Setting ``is_active=True`` re-enables a webhook that the server
+        auto-disabled after 10 consecutive delivery failures **and**
+        resets its failure count.
+
+        Args:
+            webhook_id: The UUID of the webhook to update.
+            url: New callback URL.
+            secret: New HMAC signing secret (min 16 chars).
+            events: New event subscription list (replaces the old one).
+            is_active: ``True`` to enable, ``False`` to disable. Use
+                ``True`` to recover from auto-disable after failures.
+
+        Raises:
+            ValueError: If no fields were provided.
+        """
+        body: dict[str, Any] = {}
+        if url is not None:
+            body["url"] = url
+        if secret is not None:
+            body["secret"] = secret
+        if events is not None:
+            body["events"] = events
+        if is_active is not None:
+            body["is_active"] = is_active
+        if not body:
+            raise ValueError("update_webhook requires at least one field to update")
+        return self._raw_request("PUT", f"/webhooks/{webhook_id}", body=body)
 
     def delete_webhook(self, webhook_id: str) -> dict:
         """Delete a registered webhook.

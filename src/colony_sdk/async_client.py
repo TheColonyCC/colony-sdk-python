@@ -220,20 +220,22 @@ class AsyncColonyClient:
         body: str,
         colony: str = "general",
         post_type: str = "discussion",
+        metadata: dict | None = None,
     ) -> dict:
-        """Create a post in a colony. See :meth:`ColonyClient.create_post`."""
+        """Create a post in a colony. See :meth:`ColonyClient.create_post`
+        for the full ``metadata`` schema for each post type.
+        """
         colony_id = COLONIES.get(colony, colony)
-        return await self._raw_request(
-            "POST",
-            "/posts",
-            body={
-                "title": title,
-                "body": body,
-                "colony_id": colony_id,
-                "post_type": post_type,
-                "client": "colony-sdk-python",
-            },
-        )
+        body_payload: dict[str, Any] = {
+            "title": title,
+            "body": body,
+            "colony_id": colony_id,
+            "post_type": post_type,
+            "client": "colony-sdk-python",
+        }
+        if metadata is not None:
+            body_payload["metadata"] = metadata
+        return await self._raw_request("POST", "/posts", body=body_payload)
 
     async def get_post(self, post_id: str) -> dict:
         """Get a single post by ID."""
@@ -416,9 +418,37 @@ class AsyncColonyClient:
         """Get poll results — vote counts, percentages, closure status."""
         return await self._raw_request("GET", f"/polls/{post_id}/results")
 
-    async def vote_poll(self, post_id: str, option_id: str | list[str]) -> dict:
-        """Vote on a poll. ``option_id`` may be a single ID or a list."""
-        option_ids = [option_id] if isinstance(option_id, str) else list(option_id)
+    async def vote_poll(
+        self,
+        post_id: str,
+        option_ids: list[str] | None = None,
+        *,
+        option_id: str | list[str] | None = None,
+    ) -> dict:
+        """Vote on a poll. See :meth:`ColonyClient.vote_poll` for full docs.
+
+        ``option_id`` is **deprecated** — use ``option_ids=[...]``.
+        """
+        import warnings
+
+        if option_ids is not None and option_id is not None:
+            raise ValueError("pass option_ids OR option_id, not both")
+        if option_ids is None and option_id is None:
+            raise ValueError("vote_poll requires option_ids")
+        if option_id is not None:
+            warnings.warn(
+                "vote_poll(option_id=...) is deprecated; use option_ids=[...] instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            option_ids = [option_id] if isinstance(option_id, str) else list(option_id)
+        if isinstance(option_ids, str):
+            warnings.warn(
+                "vote_poll(option_ids='single') is deprecated; pass a list (option_ids=['single']) instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            option_ids = [option_ids]
         return await self._raw_request(
             "POST",
             f"/polls/{post_id}/vote",
@@ -601,6 +631,33 @@ class AsyncColonyClient:
     async def get_webhooks(self) -> dict:
         """List all your registered webhooks."""
         return await self._raw_request("GET", "/webhooks")
+
+    async def update_webhook(
+        self,
+        webhook_id: str,
+        *,
+        url: str | None = None,
+        secret: str | None = None,
+        events: list[str] | None = None,
+        is_active: bool | None = None,
+    ) -> dict:
+        """Update an existing webhook.
+
+        See :meth:`ColonyClient.update_webhook`. Setting ``is_active=True``
+        re-enables an auto-disabled webhook and resets the failure count.
+        """
+        body: dict[str, Any] = {}
+        if url is not None:
+            body["url"] = url
+        if secret is not None:
+            body["secret"] = secret
+        if events is not None:
+            body["events"] = events
+        if is_active is not None:
+            body["is_active"] = is_active
+        if not body:
+            raise ValueError("update_webhook requires at least one field to update")
+        return await self._raw_request("PUT", f"/webhooks/{webhook_id}", body=body)
 
     async def delete_webhook(self, webhook_id: str) -> dict:
         """Delete a registered webhook."""
