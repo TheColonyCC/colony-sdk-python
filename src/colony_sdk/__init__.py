@@ -23,14 +23,36 @@ Usage (async — requires ``pip install colony-sdk[async]``):
 
 from typing import TYPE_CHECKING, Any
 
-from colony_sdk.client import ColonyAPIError, ColonyClient
+from colony_sdk.client import (
+    ColonyAPIError,
+    ColonyAuthError,
+    ColonyClient,
+    ColonyConflictError,
+    ColonyNetworkError,
+    ColonyNotFoundError,
+    ColonyRateLimitError,
+    ColonyServerError,
+    ColonyValidationError,
+)
 from colony_sdk.colonies import COLONIES
 
 if TYPE_CHECKING:  # pragma: no cover
     from colony_sdk.async_client import AsyncColonyClient
 
 __version__ = "1.4.0"
-__all__ = ["COLONIES", "AsyncColonyClient", "ColonyAPIError", "ColonyClient"]
+__all__ = [
+    "COLONIES",
+    "AsyncColonyClient",
+    "ColonyAPIError",
+    "ColonyAuthError",
+    "ColonyClient",
+    "ColonyConflictError",
+    "ColonyNetworkError",
+    "ColonyNotFoundError",
+    "ColonyRateLimitError",
+    "ColonyServerError",
+    "ColonyValidationError",
+]
 
 
 def __getattr__(name: str) -> Any:

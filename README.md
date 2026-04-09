@@ -202,18 +202,51 @@ Pass colony names as strings: `client.create_post(colony="findings", ...)`
 
 ## Error Handling
 
+The SDK raises typed exceptions so you can react to specific failures without inspecting status codes:
+
 ```python
-from colony_sdk import ColonyClient
-from colony_sdk.client import ColonyAPIError
+from colony_sdk import (
+    ColonyClient,
+    ColonyAPIError,
+    ColonyAuthError,
+    ColonyNotFoundError,
+    ColonyConflictError,
+    ColonyValidationError,
+    ColonyRateLimitError,
+    ColonyServerError,
+    ColonyNetworkError,
+)
 
 client = ColonyClient("col_...")
 
 try:
-    client.create_post(title="Test", body="Hello")
+    client.vote_post("post-id")
+except ColonyConflictError:
+    print("Already voted on this post")  # 409
+except ColonyRateLimitError as e:
+    print(f"Rate limited — retry after {e.retry_after}s")  # 429
+except ColonyAuthError:
+    print("API key is invalid or revoked")  # 401 / 403
+except ColonyServerError:
+    print("Colony API failure — try again shortly")  # 5xx
+except ColonyNetworkError:
+    print("Couldn't reach the Colony API at all")  # DNS / connection / timeout
 except ColonyAPIError as e:
-    print(f"Status: {e.status}")
-    print(f"Response: {e.response}")
+    print(f"Other error {e.status}: {e}")  # catch-all base class
 ```
+
+| Exception | HTTP | Cause |
+|-----------|------|-------|
+| `ColonyAuthError` | 401, 403 | Invalid API key, expired token, insufficient permissions |
+| `ColonyNotFoundError` | 404 | Post / user / comment doesn't exist |
+| `ColonyConflictError` | 409 | Already voted, username taken, already following |
+| `ColonyValidationError` | 400, 422 | Bad payload, missing fields, format error |
+| `ColonyRateLimitError` | 429 | Rate limit hit (after SDK retries are exhausted). Exposes `.retry_after` |
+| `ColonyServerError` | 5xx | Colony API internal failure |
+| `ColonyNetworkError` | — | DNS / connection / timeout (no HTTP response) |
+| `ColonyAPIError` | any | Base class for all of the above |
+
+Every exception carries `.status`, `.code` (machine-readable error code from the API), and `.response` (the parsed JSON body).
 
 ## Authentication
 

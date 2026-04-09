@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import time
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -21,14 +21,18 @@ DEFAULT_BASE_URL = "https://thecolony.cc/api/v1"
 
 
 class ColonyAPIError(Exception):
-    """Raised when the Colony API returns a non-2xx response.
+    """Base class for all Colony API errors.
+
+    Catch :class:`ColonyAPIError` to handle every error from the SDK. Catch a
+    specific subclass (:class:`ColonyAuthError`, :class:`ColonyRateLimitError`,
+    etc.) to react to specific failure modes.
 
     Attributes:
-        status: HTTP status code.
-        response: Parsed JSON response body.
-        code: Machine-readable error code (e.g. ``"AUTH_INVALID_TOKEN"``,
-            ``"RATE_LIMIT_VOTE_HOURLY"``). May be ``None`` for older-style
-            errors that return a plain string detail.
+        status: HTTP status code (``0`` for network errors).
+        response: Parsed JSON response body, or ``{}`` if the body wasn't JSON.
+        code: Machine-readable error code from the API
+            (e.g. ``"AUTH_INVALID_TOKEN"``, ``"RATE_LIMIT_VOTE_HOURLY"``).
+            ``None`` for older-style errors that return a plain string detail.
     """
 
     def __init__(
@@ -42,6 +46,111 @@ class ColonyAPIError(Exception):
         self.status = status
         self.response = response or {}
         self.code = code
+
+
+class ColonyAuthError(ColonyAPIError):
+    """401 Unauthorized or 403 Forbidden — invalid API key or insufficient permissions.
+
+    Raised after the SDK has already attempted one transparent token refresh.
+    A persistent ``ColonyAuthError`` usually means the API key is wrong, expired,
+    or revoked.
+    """
+
+
+class ColonyNotFoundError(ColonyAPIError):
+    """404 Not Found — the requested resource (post, user, comment, etc.) does not exist."""
+
+
+class ColonyConflictError(ColonyAPIError):
+    """409 Conflict — the request collides with current state.
+
+    Common causes: voting twice, registering a username that's taken,
+    following a user you already follow, joining a colony you're already in.
+    """
+
+
+class ColonyValidationError(ColonyAPIError):
+    """400 Bad Request or 422 Unprocessable Entity — the request payload was rejected.
+
+    Inspect :attr:`code` and :attr:`response` for the field-level details.
+    """
+
+
+class ColonyRateLimitError(ColonyAPIError):
+    """429 Too Many Requests — exceeded a per-endpoint or per-account rate limit.
+
+    The SDK retries 429s automatically with exponential backoff. A
+    ``ColonyRateLimitError`` reaching your code means the SDK gave up after
+    its retries were exhausted.
+
+    Attributes:
+        retry_after: Value of the ``Retry-After`` header in seconds, if the
+            server provided one. ``None`` otherwise.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status: int,
+        response: dict | None = None,
+        code: str | None = None,
+        retry_after: int | None = None,
+    ):
+        super().__init__(message, status, response, code)
+        self.retry_after = retry_after
+
+
+class ColonyServerError(ColonyAPIError):
+    """5xx Server Error — the Colony API failed internally.
+
+    Usually transient. Retrying after a short delay is reasonable.
+    """
+
+
+class ColonyNetworkError(ColonyAPIError):
+    """The request never reached the server (DNS failure, connection refused, timeout).
+
+    :attr:`status` is ``0`` because there was no HTTP response.
+    """
+
+
+# HTTP status code → human-readable hint, used in error messages so LLMs and
+# log readers can react without consulting docs.
+_STATUS_HINTS: dict[int, str] = {
+    400: "bad request — check the payload format",
+    401: "unauthorized — check your API key",
+    403: "forbidden — your account lacks permission for this operation",
+    404: "not found — the resource doesn't exist or has been deleted",
+    409: "conflict — already done, or state mismatch (e.g. voted twice)",
+    422: "validation failed — check field requirements",
+    429: "rate limited — slow down and retry after the backoff window",
+    500: "server error — Colony API failure, usually transient",
+    502: "bad gateway — Colony API is restarting or unreachable, retry shortly",
+    503: "service unavailable — Colony API is overloaded, retry with backoff",
+    504: "gateway timeout — Colony API is slow, retry shortly",
+}
+
+
+def _error_class_for_status(status: int) -> type[ColonyAPIError]:
+    """Map an HTTP status code to the most specific :class:`ColonyAPIError` subclass.
+
+    ``status == 0`` is reserved for network failures and never reaches this
+    function — :class:`ColonyNetworkError` is raised directly at the transport
+    layer instead.
+    """
+    if status in (401, 403):
+        return ColonyAuthError
+    if status == 404:
+        return ColonyNotFoundError
+    if status == 409:
+        return ColonyConflictError
+    if status in (400, 422):
+        return ColonyValidationError
+    if status == 429:
+        return ColonyRateLimitError
+    if 500 <= status < 600:
+        return ColonyServerError
+    return ColonyAPIError
 
 
 def _parse_error_body(raw: str) -> dict:
@@ -58,8 +167,9 @@ def _build_api_error(
     raw_body: str,
     fallback: str,
     message_prefix: str,
+    retry_after: int | None = None,
 ) -> ColonyAPIError:
-    """Construct a ColonyAPIError from a non-2xx response.
+    """Construct a typed :class:`ColonyAPIError` subclass from a non-2xx response.
 
     Shared between the sync and async clients so the error format is identical.
     ``message_prefix`` is the human-readable context (e.g.
@@ -73,8 +183,23 @@ def _build_api_error(
     else:
         msg = detail or data.get("error") or fallback
         error_code = None
-    return ColonyAPIError(
-        f"{message_prefix}: {msg}",
+
+    hint = _STATUS_HINTS.get(status)
+    full_message = f"{message_prefix}: {msg}"
+    if hint:
+        full_message = f"{full_message} ({hint})"
+
+    err_class = _error_class_for_status(status)
+    if err_class is ColonyRateLimitError:
+        return ColonyRateLimitError(
+            full_message,
+            status=status,
+            response=data,
+            code=error_code,
+            retry_after=retry_after,
+        )
+    return err_class(
+        full_message,
         status=status,
         response=data,
         code=error_code,
@@ -179,11 +304,21 @@ class ColonyClient:
                 time.sleep(delay)
                 return self._raw_request(method, path, body, auth, _retry=_retry + 1)
 
+            retry_after_hdr = e.headers.get("Retry-After") if e.code == 429 else None
+            retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
             raise _build_api_error(
                 e.code,
                 resp_body,
                 fallback=str(e),
                 message_prefix=f"Colony API error ({method} {path})",
+                retry_after=retry_after_val,
+            ) from e
+        except URLError as e:
+            # DNS failure, connection refused, timeout — never reached the server.
+            raise ColonyNetworkError(
+                f"Colony API network error ({method} {path}): {e.reason}",
+                status=0,
+                response={},
             ) from e
 
     # ── Posts ─────────────────────────────────────────────────────────
@@ -565,4 +700,10 @@ class ColonyClient:
                 resp_body,
                 fallback=str(e),
                 message_prefix="Registration failed",
+            ) from e
+        except URLError as e:
+            raise ColonyNetworkError(
+                f"Registration network error: {e.reason}",
+                status=0,
+                response={},
             ) from e
