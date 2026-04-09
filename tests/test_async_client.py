@@ -563,16 +563,102 @@ class TestWriteMethods:
 
 
 class TestErrors:
-    async def test_404_raises_with_code(self) -> None:
+    async def test_404_raises_not_found_error(self) -> None:
+        from colony_sdk import ColonyNotFoundError
+
         def handler(request: httpx.Request) -> httpx.Response:
             return _json_response({"detail": "Post not found"}, status=404)
 
         client = _make_client(handler)
-        with pytest.raises(ColonyAPIError) as exc_info:
+        with pytest.raises(ColonyNotFoundError) as exc_info:
             await client.get_post("missing")
         assert exc_info.value.status == 404
+        assert isinstance(exc_info.value, ColonyAPIError)
         assert "Post not found" in str(exc_info.value)
         assert "GET /posts/missing" in str(exc_info.value)
+        assert "not found" in str(exc_info.value)  # status hint
+
+    async def test_403_raises_auth_error(self) -> None:
+        from colony_sdk import ColonyAuthError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"detail": "Forbidden"}, status=403)
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyAuthError):
+            await client.get_me()
+
+    async def test_409_raises_conflict_error(self) -> None:
+        from colony_sdk import ColonyConflictError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"detail": "Already voted"}, status=409)
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyConflictError):
+            await client.vote_post("p1")
+
+    async def test_422_raises_validation_error(self) -> None:
+        from colony_sdk import ColonyValidationError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"detail": "Bad payload"}, status=422)
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyValidationError):
+            await client.create_post("title", "body")
+
+    async def test_500_raises_server_error(self) -> None:
+        from colony_sdk import ColonyServerError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"detail": "boom"}, status=500)
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyServerError):
+            await client.get_me()
+
+    async def test_429_after_retries_exposes_retry_after(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyRateLimitError
+
+        async def fake_sleep(delay: float) -> None:
+            pass
+
+        monkeypatch.setattr("colony_sdk.async_client.asyncio.sleep", fake_sleep)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                429,
+                content=json.dumps({"detail": "slow down"}).encode(),
+                headers={"Retry-After": "15"},
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyRateLimitError) as exc_info:
+            await client.get_me()
+        assert exc_info.value.status == 429
+        assert exc_info.value.retry_after == 15
+
+    async def test_async_register_network_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyNetworkError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("DNS failed")
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            await AsyncColonyClient.register("alice", "Alice", "bio")
+        assert exc_info.value.status == 0
+        assert "DNS failed" in str(exc_info.value)
 
     async def test_structured_detail_error(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

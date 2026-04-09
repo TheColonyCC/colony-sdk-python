@@ -958,3 +958,201 @@ class TestRegister:
         assert exc_info.value.status == 422
         assert exc_info.value.code == "INVALID_USERNAME"
         assert "Username must be lowercase" in str(exc_info.value)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_network_error(self, mock_urlopen: MagicMock) -> None:
+        from urllib.error import URLError
+
+        from colony_sdk import ColonyNetworkError
+
+        mock_urlopen.side_effect = URLError("connection refused")
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            ColonyClient.register("bot", "Bot", "bio")
+        assert exc_info.value.status == 0
+        assert "connection refused" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Typed errors
+# ---------------------------------------------------------------------------
+
+
+class TestTypedErrors:
+    @patch("colony_sdk.client.urlopen")
+    def test_404_raises_not_found_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyNotFoundError
+
+        mock_urlopen.side_effect = _make_http_error(404, {"detail": "Post not found"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyNotFoundError) as exc_info:
+            client.get_post("missing")
+        assert exc_info.value.status == 404
+        # Subclass relationship — old code catching ColonyAPIError still works
+        assert isinstance(exc_info.value, ColonyAPIError)
+        assert "not found" in str(exc_info.value)  # status hint included
+
+    @patch("colony_sdk.client.urlopen")
+    def test_401_after_refresh_raises_auth_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAuthError
+
+        # First call (initial) → 401, refresh, second call → 401 again
+        token_resp = _mock_response({"access_token": "jwt-1"})
+        mock_urlopen.side_effect = [
+            _make_http_error(401, {"detail": "Invalid token"}),
+            token_resp,
+            _make_http_error(401, {"detail": "Still invalid"}),
+        ]
+        client = _authed_client()
+        # Expire the token so the refresh path runs
+        client._token = None
+        client._token_expiry = 0
+
+        with pytest.raises(ColonyAuthError) as exc_info:
+            client.get_me()
+        assert exc_info.value.status == 401
+
+    @patch("colony_sdk.client.urlopen")
+    def test_403_raises_auth_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAuthError
+
+        mock_urlopen.side_effect = _make_http_error(403, {"detail": "Forbidden"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyAuthError) as exc_info:
+            client.get_me()
+        assert exc_info.value.status == 403
+
+    @patch("colony_sdk.client.urlopen")
+    def test_409_raises_conflict_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyConflictError
+
+        mock_urlopen.side_effect = _make_http_error(409, {"detail": "Already voted"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyConflictError):
+            client.vote_post("p1")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_400_raises_validation_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(400, {"detail": "Bad payload"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyValidationError):
+            client.create_post("title", "body")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_422_raises_validation_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(422, {"detail": "Invalid format"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyValidationError):
+            client.create_post("title", "body")
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_429_after_retries_raises_rate_limit_error_with_retry_after(
+        self, mock_sleep: MagicMock, mock_urlopen: MagicMock
+    ) -> None:
+        from colony_sdk import ColonyRateLimitError
+
+        # All three attempts return 429 with Retry-After=12
+        mock_urlopen.side_effect = [
+            _make_http_error(429, {"detail": "rate limited"}, headers={"Retry-After": "12"}),
+            _make_http_error(429, {"detail": "rate limited"}, headers={"Retry-After": "12"}),
+            _make_http_error(429, {"detail": "rate limited"}, headers={"Retry-After": "12"}),
+        ]
+        client = _authed_client()
+
+        with pytest.raises(ColonyRateLimitError) as exc_info:
+            client.get_me()
+        assert exc_info.value.status == 429
+        assert exc_info.value.retry_after == 12
+        assert "rate limited" in str(exc_info.value)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_500_raises_server_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyServerError
+
+        mock_urlopen.side_effect = _make_http_error(500, {"detail": "boom"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyServerError) as exc_info:
+            client.get_me()
+        assert exc_info.value.status == 500
+        assert "server error" in str(exc_info.value)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_503_raises_server_error(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyServerError
+
+        mock_urlopen.side_effect = _make_http_error(503, {"detail": "overloaded"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyServerError):
+            client.get_me()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unknown_4xx_falls_back_to_base_class(self, mock_urlopen: MagicMock) -> None:
+        # 418 I'm a teapot — no specific subclass, should be the base ColonyAPIError
+        from colony_sdk import (
+            ColonyAuthError,
+            ColonyNotFoundError,
+        )
+
+        mock_urlopen.side_effect = _make_http_error(418, {"detail": "i am a teapot"})
+        client = _authed_client()
+
+        with pytest.raises(ColonyAPIError) as exc_info:
+            client.get_me()
+        # It's the base class, NOT one of the specific subclasses
+        assert type(exc_info.value) is ColonyAPIError
+        assert not isinstance(exc_info.value, (ColonyAuthError, ColonyNotFoundError))
+        assert exc_info.value.status == 418
+
+    @patch("colony_sdk.client.urlopen")
+    def test_network_error_during_request(self, mock_urlopen: MagicMock) -> None:
+        from urllib.error import URLError
+
+        from colony_sdk import ColonyNetworkError
+
+        mock_urlopen.side_effect = URLError("DNS lookup failed")
+        client = _authed_client()
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            client.get_me()
+        assert exc_info.value.status == 0
+        assert "DNS lookup failed" in str(exc_info.value)
+
+    def test_rate_limit_error_default_retry_after(self) -> None:
+        from colony_sdk import ColonyRateLimitError
+
+        err = ColonyRateLimitError("rate", status=429)
+        assert err.retry_after is None
+
+    def test_all_typed_errors_subclass_base(self) -> None:
+        from colony_sdk import (
+            ColonyAuthError,
+            ColonyConflictError,
+            ColonyNetworkError,
+            ColonyNotFoundError,
+            ColonyRateLimitError,
+            ColonyServerError,
+            ColonyValidationError,
+        )
+
+        for cls in (
+            ColonyAuthError,
+            ColonyNotFoundError,
+            ColonyConflictError,
+            ColonyValidationError,
+            ColonyRateLimitError,
+            ColonyServerError,
+            ColonyNetworkError,
+        ):
+            assert issubclass(cls, ColonyAPIError)

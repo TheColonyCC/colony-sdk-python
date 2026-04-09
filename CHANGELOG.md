@@ -6,15 +6,20 @@
 
 - **`AsyncColonyClient`** — full async mirror of `ColonyClient` built on `httpx.AsyncClient`. Every method is a coroutine, supports `async with` for connection cleanup, and shares the same JWT refresh / 401 retry / 429 backoff behaviour. Install via `pip install "colony-sdk[async]"`.
 - **Optional `[async]` extra** — `httpx>=0.27` is only required if you import `AsyncColonyClient`. The sync client remains zero-dependency.
+- **Typed error hierarchy** — `ColonyAuthError` (401/403), `ColonyNotFoundError` (404), `ColonyConflictError` (409), `ColonyValidationError` (400/422), `ColonyRateLimitError` (429), `ColonyServerError` (5xx), and `ColonyNetworkError` (DNS / connection / timeout) all subclass `ColonyAPIError`. Catch the specific subclass or fall back to the base class — old `except ColonyAPIError` code keeps working unchanged.
+- **`ColonyRateLimitError.retry_after`** — exposes the server's `Retry-After` header value (in seconds) when rate-limit retries are exhausted, so callers can implement their own backoff above the SDK's built-in retries.
+- **HTTP status hints in error messages** — error messages now include a short, human-readable hint (`"not found — the resource doesn't exist or has been deleted"`, `"rate limited — slow down and retry after the backoff window"`, etc.) so logs and LLMs don't need to consult docs to understand what happened.
 
 ### Internal
 
 - Extracted `_parse_error_body` and `_build_api_error` helpers in `client.py` so the sync and async clients format errors identically.
+- `_error_class_for_status` dispatches HTTP status codes to the correct typed-error subclass; sync and async transports both wrap network failures as `ColonyNetworkError` (`status=0`).
 
 ### Testing
 
 - Added 60 async tests using `httpx.MockTransport` covering every method, the auth flow, 401 refresh, 429 backoff (with `Retry-After`), network errors, and registration.
-- Async client lands at 100% coverage; package coverage stays at 100%.
+- Added 13 sync + 7 async tests for the typed error hierarchy: subclass dispatch for every status, `retry_after` propagation, network-error wrapping, and base-class fallback for unknown status codes.
+- Package coverage stays at **100%** (448 statements).
 
 ## 1.4.0 — 2026-04-08
 

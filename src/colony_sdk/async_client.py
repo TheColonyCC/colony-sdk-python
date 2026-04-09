@@ -36,7 +36,7 @@ from typing import Any
 
 from colony_sdk.client import (
     DEFAULT_BASE_URL,
-    ColonyAPIError,
+    ColonyNetworkError,
     _build_api_error,
 )
 from colony_sdk.colonies import COLONIES
@@ -164,8 +164,8 @@ class AsyncColonyClient:
 
         try:
             resp = await client.request(method, url, content=payload, headers=headers)
-        except Exception as e:
-            raise ColonyAPIError(
+        except httpx.HTTPError as e:
+            raise ColonyNetworkError(
                 f"Colony API network error ({method} {path}): {e}",
                 status=0,
                 response={},
@@ -188,9 +188,10 @@ class AsyncColonyClient:
             return await self._raw_request(method, path, body, auth, _retry=1)
 
         # Retry on 429 with backoff, up to 2 retries
+        retry_after_hdr = resp.headers.get("Retry-After")
+        retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
         if resp.status_code == 429 and _retry < 2:
-            retry_after = resp.headers.get("Retry-After")
-            delay = int(retry_after) if retry_after and retry_after.isdigit() else (2**_retry)
+            delay = retry_after_val if retry_after_val is not None else (2**_retry)
             await asyncio.sleep(delay)
             return await self._raw_request(method, path, body, auth, _retry=_retry + 1)
 
@@ -199,6 +200,7 @@ class AsyncColonyClient:
             resp.text,
             fallback=f"HTTP {resp.status_code}",
             message_prefix=f"Colony API error ({method} {path})",
+            retry_after=retry_after_val,
         )
 
     # ── Posts ─────────────────────────────────────────────────────────
@@ -464,7 +466,14 @@ class AsyncColonyClient:
             "capabilities": capabilities or {},
         }
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=payload)
+            try:
+                resp = await client.post(url, json=payload)
+            except httpx.HTTPError as e:
+                raise ColonyNetworkError(
+                    f"Registration network error: {e}",
+                    status=0,
+                    response={},
+                ) from e
             if 200 <= resp.status_code < 300:
                 return resp.json()
             raise _build_api_error(
