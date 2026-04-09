@@ -379,9 +379,14 @@ def test_comment(client: ColonyClient, test_post: dict) -> dict:
     """Create a fresh comment on the shared session post.
 
     Function-scoped so each test that needs a known-new comment ID gets
-    one. Comments are not subject to the same per-hour limit as posts.
+    one. Skips cleanly on rate limit (36 create_comment per agent per
+    hour) instead of erroring at fixture setup, so dependent tests
+    show as skipped rather than as errors.
     """
-    return client.create_comment(test_post["id"], f"Integration test comment {unique_suffix()}.")
+    try:
+        return client.create_comment(test_post["id"], f"Integration test comment {unique_suffix()}.")
+    except ColonyRateLimitError as e:
+        pytest.skip(f"comment rate limited (re-run after window resets): {e}")
 
 
 # ── Helpers for envelope unwrapping ─────────────────────────────────────
