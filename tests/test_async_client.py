@@ -567,6 +567,24 @@ class TestWriteMethods:
         with pytest.raises(ValueError, match="requires option_ids"):
             await client.vote_poll("p1")
 
+    async def test_vote_poll_rejects_both_args(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(ValueError, match="not both"):
+            await client.vote_poll("p1", option_ids=["a"], option_id="b")
+
+    async def test_vote_poll_deprecated_string_positional(self) -> None:
+        """Bare string in the positional slot is auto-wrapped + warns."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"voted": True})
+
+        client = _make_client(handler)
+        with pytest.warns(DeprecationWarning, match="single"):
+            await client.vote_poll("p1", "opt-1")
+        assert seen["body"] == {"option_ids": ["opt-1"]}
+
     async def test_send_message(self) -> None:
         seen: dict = {}
 
@@ -721,6 +739,25 @@ class TestWriteMethods:
         assert seen["method"] == "PUT"
         assert seen["url"].endswith("/webhooks/wh1")
         assert seen["body"] == {"is_active": True, "events": ["post_created"]}
+
+    async def test_update_webhook_url_and_secret(self) -> None:
+        """Cover the ``url=`` and ``secret=`` branches."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "wh1"})
+
+        client = _make_client(handler)
+        await client.update_webhook(
+            "wh1",
+            url="https://new.example.com/hook",
+            secret="brand-new-secret-1234",
+        )
+        assert seen["body"] == {
+            "url": "https://new.example.com/hook",
+            "secret": "brand-new-secret-1234",
+        }
 
     async def test_update_webhook_rejects_no_fields(self) -> None:
         client = _make_client(lambda r: _json_response({}))
