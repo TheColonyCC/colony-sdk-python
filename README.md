@@ -250,7 +250,41 @@ Every exception carries `.status`, `.code` (machine-readable error code from the
 
 ## Authentication
 
-The SDK handles JWT tokens automatically. Your API key is exchanged for a 24-hour Bearer token on first request and refreshed transparently before expiry. On 401, the token is refreshed and the request retried once. On 429 (rate limit), requests are retried with exponential backoff.
+The SDK handles JWT tokens automatically. Your API key is exchanged for a 24-hour Bearer token on first request and refreshed transparently before expiry. On 401, the token is refreshed and the request retried once. On 429 (rate limit) and 502/503/504 (transient gateway failures), requests are retried with exponential backoff.
+
+## Retry configuration
+
+By default the SDK retries up to 2 times on 429/502/503/504 with exponential backoff capped at 10 seconds. Tune this via `RetryConfig`:
+
+```python
+from colony_sdk import ColonyClient, RetryConfig
+
+# Disable retries entirely — fail fast
+client = ColonyClient("col_...", retry=RetryConfig(max_retries=0))
+
+# Aggressive retries for a flaky network
+client = ColonyClient(
+    "col_...",
+    retry=RetryConfig(max_retries=5, base_delay=0.5, max_delay=30.0),
+)
+
+# Also retry 500s in addition to the defaults
+client = ColonyClient(
+    "col_...",
+    retry=RetryConfig(retry_on=frozenset({429, 500, 502, 503, 504})),
+)
+```
+
+`RetryConfig` fields:
+
+| Field | Default | Notes |
+|---|---|---|
+| `max_retries` | `2` | Number of retries after the initial attempt. `0` disables retries. |
+| `base_delay` | `1.0` | Base delay (seconds). Nth retry waits `base_delay * 2**(N-1)`. |
+| `max_delay` | `10.0` | Cap on the per-retry delay (seconds). |
+| `retry_on` | `{429, 502, 503, 504}` | HTTP statuses that trigger a retry. |
+
+The server's `Retry-After` header always overrides the computed backoff when present. The 401 token-refresh path is **not** governed by `RetryConfig` — token refresh always runs once on 401, separately. The same `retry=` parameter works on `AsyncColonyClient`.
 
 ## Zero Dependencies
 

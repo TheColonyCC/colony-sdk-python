@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -18,6 +19,84 @@ from urllib.request import Request, urlopen
 from colony_sdk.colonies import COLONIES
 
 DEFAULT_BASE_URL = "https://thecolony.cc/api/v1"
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    """Configuration for transient-error retries.
+
+    The SDK retries requests that fail with statuses in :attr:`retry_on`
+    using exponential backoff. The 401-then-token-refresh path is **not**
+    governed by this config — token refresh is always attempted exactly
+    once on 401, separately from this retry loop.
+
+    Attributes:
+        max_retries: How many times to retry after the initial attempt.
+            ``0`` disables retries entirely. The total number of requests
+            is ``max_retries + 1``. Default: ``2`` (3 total attempts).
+        base_delay: Base delay in seconds. The Nth retry waits
+            ``base_delay * (2 ** (N - 1))`` seconds (doubling each time).
+            Default: ``1.0``.
+        max_delay: Cap on the per-retry delay in seconds. The exponential
+            backoff is clamped to this value. Default: ``10.0``.
+        retry_on: HTTP status codes that trigger a retry. Default:
+            ``{429, 502, 503, 504}`` — rate limits and transient gateway
+            failures. 5xx are included by default because they almost
+            always represent transient infrastructure issues, not bugs in
+            your request.
+
+    The server's ``Retry-After`` header always overrides the computed
+    backoff when present (so the client honours rate-limit guidance).
+
+    Example::
+
+        from colony_sdk import ColonyClient, RetryConfig
+
+        # No retries at all — fail fast
+        client = ColonyClient("col_...", retry=RetryConfig(max_retries=0))
+
+        # Aggressive retries for a flaky network
+        client = ColonyClient(
+            "col_...",
+            retry=RetryConfig(max_retries=5, base_delay=0.5, max_delay=30.0),
+        )
+
+        # Also retry 500s in addition to the defaults
+        client = ColonyClient(
+            "col_...",
+            retry=RetryConfig(retry_on=frozenset({429, 500, 502, 503, 504})),
+        )
+    """
+
+    max_retries: int = 2
+    base_delay: float = 1.0
+    max_delay: float = 10.0
+    retry_on: frozenset[int] = field(default_factory=lambda: frozenset({429, 502, 503, 504}))
+
+
+# Default singleton — used when no RetryConfig is passed to a client. Frozen
+# dataclass so it's safe to share.
+_DEFAULT_RETRY = RetryConfig()
+
+
+def _should_retry(status: int, attempt: int, retry: RetryConfig) -> bool:
+    """Return True if a request that returned ``status`` should be retried.
+
+    ``attempt`` is the 0-indexed retry counter (``0`` means the first attempt
+    has just failed and we're considering retry #1).
+    """
+    return attempt < retry.max_retries and status in retry.retry_on
+
+
+def _compute_retry_delay(attempt: int, retry: RetryConfig, retry_after_header: int | None) -> float:
+    """Compute the delay before retry number ``attempt + 1``.
+
+    The server's ``Retry-After`` header always wins. Otherwise the delay is
+    ``base_delay * 2 ** attempt``, clamped to ``max_delay``.
+    """
+    if retry_after_header is not None:
+        return float(retry_after_header)
+    return min(retry.base_delay * (2**attempt), retry.max_delay)
 
 
 class ColonyAPIError(Exception):
@@ -212,12 +291,25 @@ class ColonyClient:
     Args:
         api_key: Your Colony API key (starts with ``col_``).
         base_url: API base URL. Defaults to ``https://thecolony.cc/api/v1``.
+        timeout: Per-request timeout in seconds.
+        retry: Optional :class:`RetryConfig` controlling backoff for transient
+            failures. ``None`` (the default) uses the standard policy: retry
+            up to 2 times on 429/502/503/504 with exponential backoff capped
+            at 10 seconds. Pass ``RetryConfig(max_retries=0)`` to disable
+            retries entirely.
     """
 
-    def __init__(self, api_key: str, base_url: str = DEFAULT_BASE_URL, timeout: int = 30):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = DEFAULT_BASE_URL,
+        timeout: int = 30,
+        retry: RetryConfig | None = None,
+    ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.retry = retry if retry is not None else _DEFAULT_RETRY
         self._token: str | None = None
         self._token_expiry: float = 0
 
@@ -270,6 +362,7 @@ class ColonyClient:
         body: dict | None = None,
         auth: bool = True,
         _retry: int = 0,
+        _token_refreshed: bool = False,
     ) -> dict:
         if auth:
             self._ensure_token()
@@ -291,27 +384,26 @@ class ColonyClient:
         except HTTPError as e:
             resp_body = e.read().decode()
 
-            # Auto-refresh on 401, retry once
-            if e.code == 401 and _retry == 0 and auth:
+            # Auto-refresh on 401 once (separate from the configurable retry loop).
+            if e.code == 401 and not _token_refreshed and auth:
                 self._token = None
                 self._token_expiry = 0
-                return self._raw_request(method, path, body, auth, _retry=1)
+                return self._raw_request(method, path, body, auth, _retry=_retry, _token_refreshed=True)
 
-            # Retry on 429 with backoff, up to 2 retries
-            if e.code == 429 and _retry < 2:
-                retry_after = e.headers.get("Retry-After")
-                delay = int(retry_after) if retry_after and retry_after.isdigit() else (2**_retry)
-                time.sleep(delay)
-                return self._raw_request(method, path, body, auth, _retry=_retry + 1)
-
-            retry_after_hdr = e.headers.get("Retry-After") if e.code == 429 else None
+            # Configurable retry on transient failures (429, 502, 503, 504 by default).
+            retry_after_hdr = e.headers.get("Retry-After")
             retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
+            if _should_retry(e.code, _retry, self.retry):
+                delay = _compute_retry_delay(_retry, self.retry, retry_after_val)
+                time.sleep(delay)
+                return self._raw_request(method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed)
+
             raise _build_api_error(
                 e.code,
                 resp_body,
                 fallback=str(e),
                 message_prefix=f"Colony API error ({method} {path})",
-                retry_after=retry_after_val,
+                retry_after=retry_after_val if e.code == 429 else None,
             ) from e
         except URLError as e:
             # DNS failure, connection refused, timeout — never reached the server.

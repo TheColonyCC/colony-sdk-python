@@ -49,7 +49,7 @@ def _make_http_error(code: int, data: dict | None = None, headers: dict | None =
         hdrs=MagicMock(),
         fp=io.BytesIO(body),
     )
-    if headers:
+    if headers is not None:
         err.headers.get = lambda key, default=None, _h=headers: _h.get(key, default)
     return err
 
@@ -1156,3 +1156,242 @@ class TestTypedErrors:
             ColonyNetworkError,
         ):
             assert issubclass(cls, ColonyAPIError)
+
+
+# ---------------------------------------------------------------------------
+# RetryConfig
+# ---------------------------------------------------------------------------
+
+
+class TestRetryConfig:
+    def test_default_values(self) -> None:
+        from colony_sdk import RetryConfig
+
+        cfg = RetryConfig()
+        assert cfg.max_retries == 2
+        assert cfg.base_delay == 1.0
+        assert cfg.max_delay == 10.0
+        assert cfg.retry_on == frozenset({429, 502, 503, 504})
+
+    def test_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
+        from colony_sdk import RetryConfig
+
+        cfg = RetryConfig()
+        with pytest.raises(FrozenInstanceError):
+            cfg.max_retries = 99  # type: ignore[misc]
+
+    def test_client_uses_default_retry_config_when_none_passed(self) -> None:
+        from colony_sdk import ColonyClient, RetryConfig
+
+        client = ColonyClient("col_x")
+        assert isinstance(client.retry, RetryConfig)
+        assert client.retry.max_retries == 2
+
+    def test_client_accepts_custom_retry_config(self) -> None:
+        from colony_sdk import ColonyClient, RetryConfig
+
+        cfg = RetryConfig(max_retries=5, base_delay=0.5, max_delay=30.0)
+        client = ColonyClient("col_x", retry=cfg)
+        assert client.retry is cfg
+        assert client.retry.max_retries == 5
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_max_retries_zero_disables_retry(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyClient, ColonyRateLimitError, RetryConfig
+
+        mock_urlopen.side_effect = _make_http_error(429, {"detail": "rate limited"})
+        client = ColonyClient("col_x", retry=RetryConfig(max_retries=0))
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            client.get_me()
+
+        # Exactly one urlopen call (the original) — no retries
+        assert mock_urlopen.call_count == 1
+        assert mock_sleep.call_count == 0
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_custom_max_retries(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyClient, ColonyRateLimitError, RetryConfig
+
+        mock_urlopen.side_effect = _make_http_error(429, {"detail": "still rate limited"})
+        client = ColonyClient("col_x", retry=RetryConfig(max_retries=4))
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            client.get_me()
+
+        # 1 original + 4 retries = 5 total calls
+        assert mock_urlopen.call_count == 5
+        assert mock_sleep.call_count == 4
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_default_retries_503_server_error(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        # Behavior change in this PR: 5xx (502/503/504) are retried by default
+        from colony_sdk import ColonyClient, ColonyServerError
+
+        mock_urlopen.side_effect = _make_http_error(503, {"detail": "overloaded"})
+        client = ColonyClient("col_x")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyServerError):
+            client.get_me()
+
+        # 1 original + 2 retries (default max_retries=2) = 3 total calls
+        assert mock_urlopen.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_default_does_not_retry_500(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        # 500 is NOT in the default retry_on set (only 502/503/504 are — 500
+        # is more often a bug in the request than a transient infra issue)
+        from colony_sdk import ColonyClient, ColonyServerError
+
+        mock_urlopen.side_effect = _make_http_error(500, {"detail": "boom"})
+        client = ColonyClient("col_x")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyServerError):
+            client.get_me()
+
+        assert mock_urlopen.call_count == 1
+        assert mock_sleep.call_count == 0
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_custom_retry_on_set(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        # User opts into retrying 500
+        from colony_sdk import ColonyClient, ColonyServerError, RetryConfig
+
+        mock_urlopen.side_effect = _make_http_error(500, {"detail": "boom"})
+        client = ColonyClient(
+            "col_x",
+            retry=RetryConfig(retry_on=frozenset({500, 502, 503, 504})),
+        )
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyServerError):
+            client.get_me()
+
+        assert mock_urlopen.call_count == 3  # 1 + 2 retries
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_exponential_backoff_delays(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyClient, ColonyRateLimitError, RetryConfig
+
+        # Empty headers dict so .get("Retry-After") returns None and the
+        # exponential backoff path runs instead of the header-override path.
+        mock_urlopen.side_effect = _make_http_error(429, {"detail": "rate limited"}, headers={})
+        client = ColonyClient(
+            "col_x",
+            retry=RetryConfig(max_retries=3, base_delay=2.0, max_delay=100.0),
+        )
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            client.get_me()
+
+        # base_delay=2.0, attempts 0,1,2 → delays 2*1, 2*2, 2*4 = 2, 4, 8
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert delays == [2.0, 4.0, 8.0]
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_max_delay_caps_backoff(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyClient, ColonyRateLimitError, RetryConfig
+
+        mock_urlopen.side_effect = _make_http_error(429, {"detail": "rate limited"}, headers={})
+        client = ColonyClient(
+            "col_x",
+            retry=RetryConfig(max_retries=4, base_delay=10.0, max_delay=15.0),
+        )
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            client.get_me()
+
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        # Computed: 10*1=10, 10*2=20, 10*4=40, 10*8=80
+        # Capped at 15: 10, 15, 15, 15
+        assert delays == [10.0, 15.0, 15.0, 15.0]
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_retry_after_header_overrides_backoff(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyClient, ColonyRateLimitError
+
+        # All attempts return Retry-After=42
+        mock_urlopen.side_effect = [
+            _make_http_error(429, {"detail": "x"}, headers={"Retry-After": "42"}),
+            _make_http_error(429, {"detail": "x"}, headers={"Retry-After": "42"}),
+            _make_http_error(429, {"detail": "x"}, headers={"Retry-After": "42"}),
+        ]
+        client = ColonyClient("col_x")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            client.get_me()
+
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        # All delays are 42 (from header), not the exponential 1/2 the
+        # default base_delay would produce
+        assert delays == [42.0, 42.0]
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_retry_then_success(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyClient
+
+        mock_urlopen.side_effect = [
+            _make_http_error(429, {"detail": "rate limited"}),
+            _make_http_error(503, {"detail": "overloaded"}),
+            _mock_response({"id": "u1"}),
+        ]
+        client = ColonyClient("col_x")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        result = client.get_me()
+        assert result == {"id": "u1"}
+        assert mock_urlopen.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("colony_sdk.client.urlopen")
+    @patch("colony_sdk.client.time.sleep")
+    def test_token_refresh_does_not_consume_retry_budget(self, mock_sleep: MagicMock, mock_urlopen: MagicMock) -> None:
+        # 401 → refresh token → 429 → retry → 429 → retry → success
+        # Token refresh should NOT count against the configurable retry budget
+        from colony_sdk import ColonyClient
+
+        mock_urlopen.side_effect = [
+            _make_http_error(401, {"detail": "expired"}),
+            _mock_response({"access_token": "jwt-new"}),
+            _make_http_error(429, {"detail": "wait"}),
+            _make_http_error(429, {"detail": "wait"}),
+            _mock_response({"id": "u1"}),
+        ]
+        client = ColonyClient("col_x")
+        client._token = "expired-jwt"
+        client._token_expiry = 9_999_999_999
+
+        result = client.get_me()
+        assert result == {"id": "u1"}
+        # 5 total HTTP calls: original 401, token refresh, retry 429, retry 429, success
+        assert mock_urlopen.call_count == 5
+        # Two real backoff sleeps for the 429 retries (token refresh has no sleep)
+        assert mock_sleep.call_count == 2

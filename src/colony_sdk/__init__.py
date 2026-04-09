@@ -33,6 +33,7 @@ from colony_sdk.client import (
     ColonyRateLimitError,
     ColonyServerError,
     ColonyValidationError,
+    RetryConfig,
 )
 from colony_sdk.colonies import COLONIES
 
@@ -52,6 +53,7 @@ __all__ = [
     "ColonyRateLimitError",
     "ColonyServerError",
     "ColonyValidationError",
+    "RetryConfig",
 ]
 
 
