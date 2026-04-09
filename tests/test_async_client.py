@@ -767,6 +767,159 @@ class TestErrors:
 
 
 # ---------------------------------------------------------------------------
+# RetryConfig
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncRetryConfig:
+    async def test_default_retry_config(self) -> None:
+        from colony_sdk import RetryConfig
+
+        client = AsyncColonyClient("col_x")
+        assert isinstance(client.retry, RetryConfig)
+        assert client.retry.max_retries == 2
+
+    async def test_custom_retry_config(self) -> None:
+        from colony_sdk import RetryConfig
+
+        cfg = RetryConfig(max_retries=5, base_delay=0.1)
+        client = AsyncColonyClient("col_x", retry=cfg)
+        assert client.retry is cfg
+
+    async def test_max_retries_zero_disables_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyRateLimitError, RetryConfig
+
+        sleeps: list[float] = []
+
+        async def fake_sleep(d: float) -> None:
+            sleeps.append(d)
+
+        monkeypatch.setattr("colony_sdk.async_client.asyncio.sleep", fake_sleep)
+
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return _json_response({"detail": "rate limited"}, status=429)
+
+        transport = httpx.MockTransport(handler)
+        client = AsyncColonyClient(
+            "col_x",
+            client=httpx.AsyncClient(transport=transport),
+            retry=RetryConfig(max_retries=0),
+        )
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            await client.get_me()
+        assert attempts == 1
+        assert sleeps == []
+
+    async def test_default_retries_503(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyServerError
+
+        async def fake_sleep(d: float) -> None:
+            pass
+
+        monkeypatch.setattr("colony_sdk.async_client.asyncio.sleep", fake_sleep)
+
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return _json_response({"detail": "overloaded"}, status=503)
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyServerError):
+            await client.get_me()
+        # Default max_retries=2 → 1 + 2 = 3 attempts
+        assert attempts == 3
+
+    async def test_default_does_not_retry_500(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyServerError
+
+        async def fake_sleep(d: float) -> None:
+            pass
+
+        monkeypatch.setattr("colony_sdk.async_client.asyncio.sleep", fake_sleep)
+
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return _json_response({"detail": "boom"}, status=500)
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyServerError):
+            await client.get_me()
+        assert attempts == 1
+
+    async def test_exponential_backoff_delays(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyRateLimitError, RetryConfig
+
+        sleeps: list[float] = []
+
+        async def fake_sleep(d: float) -> None:
+            sleeps.append(d)
+
+        monkeypatch.setattr("colony_sdk.async_client.asyncio.sleep", fake_sleep)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"detail": "rate limited"}, status=429)
+
+        transport = httpx.MockTransport(handler)
+        client = AsyncColonyClient(
+            "col_x",
+            client=httpx.AsyncClient(transport=transport),
+            retry=RetryConfig(max_retries=3, base_delay=2.0, max_delay=100.0),
+        )
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        with pytest.raises(ColonyRateLimitError):
+            await client.get_me()
+        assert sleeps == [2.0, 4.0, 8.0]
+
+    async def test_token_refresh_does_not_consume_retry_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sleeps: list[float] = []
+
+        async def fake_sleep(d: float) -> None:
+            sleeps.append(d)
+
+        monkeypatch.setattr("colony_sdk.async_client.asyncio.sleep", fake_sleep)
+
+        calls: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            path = request.url.path
+            if path.endswith("/auth/token"):
+                return _json_response({"access_token": "jwt-new"})
+            me_calls = sum(1 for r in calls if r.url.path.endswith("/users/me"))
+            if me_calls == 1:
+                # First /users/me → 401 to trigger token refresh
+                return _json_response({"detail": "expired"}, status=401)
+            if me_calls in (2, 3):
+                # Subsequent /users/me → 429 (consume retry budget)
+                return _json_response({"detail": "wait"}, status=429)
+            return _json_response({"id": "u1"})
+
+        transport = httpx.MockTransport(handler)
+        async with AsyncColonyClient("col_x", client=httpx.AsyncClient(transport=transport)) as client:
+            client._token = "expired"
+            client._token_expiry = 9_999_999_999
+            result = await client.get_me()
+
+        assert result == {"id": "u1"}
+        # Two backoff sleeps (token refresh has none)
+        assert len(sleeps) == 2
+
+
+# ---------------------------------------------------------------------------
 # rotate_key
 # ---------------------------------------------------------------------------
 

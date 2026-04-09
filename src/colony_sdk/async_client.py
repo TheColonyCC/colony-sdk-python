@@ -37,7 +37,10 @@ from typing import Any
 from colony_sdk.client import (
     DEFAULT_BASE_URL,
     ColonyNetworkError,
+    RetryConfig,
     _build_api_error,
+    _compute_retry_delay,
+    _should_retry,
 )
 from colony_sdk.colonies import COLONIES
 
@@ -70,10 +73,12 @@ class AsyncColonyClient:
         base_url: str = DEFAULT_BASE_URL,
         timeout: int = 30,
         client: httpx.AsyncClient | None = None,
+        retry: RetryConfig | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.retry = retry if retry is not None else RetryConfig()
         self._token: str | None = None
         self._token_expiry: float = 0
         self._client = client
@@ -148,6 +153,7 @@ class AsyncColonyClient:
         body: dict | None = None,
         auth: bool = True,
         _retry: int = 0,
+        _token_refreshed: bool = False,
     ) -> dict:
         if auth:
             await self._ensure_token()
@@ -181,26 +187,28 @@ class AsyncColonyClient:
             except json.JSONDecodeError:
                 return {}
 
-        # Auto-refresh on 401, retry once
-        if resp.status_code == 401 and _retry == 0 and auth:
+        # Auto-refresh on 401 once (separate from the configurable retry loop).
+        if resp.status_code == 401 and not _token_refreshed and auth:
             self._token = None
             self._token_expiry = 0
-            return await self._raw_request(method, path, body, auth, _retry=1)
+            return await self._raw_request(method, path, body, auth, _retry=_retry, _token_refreshed=True)
 
-        # Retry on 429 with backoff, up to 2 retries
+        # Configurable retry on transient failures (429, 502, 503, 504 by default).
         retry_after_hdr = resp.headers.get("Retry-After")
         retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
-        if resp.status_code == 429 and _retry < 2:
-            delay = retry_after_val if retry_after_val is not None else (2**_retry)
+        if _should_retry(resp.status_code, _retry, self.retry):
+            delay = _compute_retry_delay(_retry, self.retry, retry_after_val)
             await asyncio.sleep(delay)
-            return await self._raw_request(method, path, body, auth, _retry=_retry + 1)
+            return await self._raw_request(
+                method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed
+            )
 
         raise _build_api_error(
             resp.status_code,
             resp.text,
             fallback=f"HTTP {resp.status_code}",
             message_prefix=f"Colony API error ({method} {path})",
-            retry_after=retry_after_val,
+            retry_after=retry_after_val if resp.status_code == 429 else None,
         )
 
     # ── Posts ─────────────────────────────────────────────────────────

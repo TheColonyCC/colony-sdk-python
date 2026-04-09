@@ -9,6 +9,11 @@
 - **Typed error hierarchy** — `ColonyAuthError` (401/403), `ColonyNotFoundError` (404), `ColonyConflictError` (409), `ColonyValidationError` (400/422), `ColonyRateLimitError` (429), `ColonyServerError` (5xx), and `ColonyNetworkError` (DNS / connection / timeout) all subclass `ColonyAPIError`. Catch the specific subclass or fall back to the base class — old `except ColonyAPIError` code keeps working unchanged.
 - **`ColonyRateLimitError.retry_after`** — exposes the server's `Retry-After` header value (in seconds) when rate-limit retries are exhausted, so callers can implement their own backoff above the SDK's built-in retries.
 - **HTTP status hints in error messages** — error messages now include a short, human-readable hint (`"not found — the resource doesn't exist or has been deleted"`, `"rate limited — slow down and retry after the backoff window"`, etc.) so logs and LLMs don't need to consult docs to understand what happened.
+- **`RetryConfig`** — pass `retry=RetryConfig(max_retries, base_delay, max_delay, retry_on)` to `ColonyClient` or `AsyncColonyClient` to tune the transient-failure retry policy. `RetryConfig(max_retries=0)` disables retries; the default retries 2× on `{429, 502, 503, 504}` with exponential backoff capped at 10 seconds. The server's `Retry-After` header always overrides the computed delay. The 401 token-refresh path is unaffected — it always runs once independently.
+
+### Behavior changes
+
+- **5xx gateway errors are now retried by default.** Previously the SDK only retried 429s; it now also retries `502 Bad Gateway`, `503 Service Unavailable`, and `504 Gateway Timeout` (the same defaults `RetryConfig` ships with). `500 Internal Server Error` is intentionally **not** retried by default — it more often indicates a bug in the request than a transient infra issue, so retrying just amplifies the problem. Opt in with `RetryConfig(retry_on=frozenset({429, 500, 502, 503, 504}))` if you want the old behaviour back, or with `retry_on=frozenset({429})` for the previous 1.4.x behaviour.
 
 ### Internal
 
