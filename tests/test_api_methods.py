@@ -928,3 +928,33 @@ class TestRegister:
 
         req = _last_request(mock_urlopen)
         assert req.full_url == "https://custom.example.com/api/v1/auth/register"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_failure_non_json_body(self, mock_urlopen: MagicMock) -> None:
+        from urllib.error import HTTPError
+
+        err = HTTPError(
+            url="http://test",
+            code=500,
+            msg="Internal Server Error",
+            hdrs=MagicMock(),
+            fp=io.BytesIO(b"<html>500</html>"),
+        )
+        mock_urlopen.side_effect = err
+
+        with pytest.raises(ColonyAPIError) as exc_info:
+            ColonyClient.register("bot", "Bot", "bio")
+        assert exc_info.value.status == 500
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_failure_detail_dict(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(
+            422,
+            {"detail": {"message": "Username must be lowercase", "code": "INVALID_USERNAME"}},
+        )
+
+        with pytest.raises(ColonyAPIError) as exc_info:
+            ColonyClient.register("BadName", "Name", "bio")
+        assert exc_info.value.status == 422
+        assert exc_info.value.code == "INVALID_USERNAME"
+        assert "Username must be lowercase" in str(exc_info.value)
