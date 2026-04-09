@@ -1020,3 +1020,151 @@ class TestRegister:
             await AsyncColonyClient.register("taken", "Name", "bio")
         assert exc_info.value.status == 409
         assert "Username taken" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Pagination iterators
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncIterPosts:
+    async def test_single_page(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"posts": [{"id": f"p{i}"} for i in range(5)]})
+
+        client = _make_client(handler)
+        posts = [p async for p in client.iter_posts()]
+        assert len(posts) == 5
+
+    async def test_multi_page_with_partial_last(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            offset = int(request.url.params.get("offset", "0"))
+            if offset == 0:
+                return _json_response({"posts": [{"id": f"p{i}"} for i in range(20)]})
+            if offset == 20:
+                return _json_response({"posts": [{"id": f"p{i}"} for i in range(20, 40)]})
+            return _json_response({"posts": [{"id": "p40"}, {"id": "p41"}]})
+
+        client = _make_client(handler)
+        posts = [p async for p in client.iter_posts()]
+        assert len(posts) == 42
+        assert posts[0]["id"] == "p0"
+        assert posts[-1]["id"] == "p41"
+        assert len(calls) == 3
+
+    async def test_max_results_stops_early(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"posts": [{"id": f"p{i}"} for i in range(20)]})
+
+        client = _make_client(handler)
+        posts: list[dict] = []
+        async for p in client.iter_posts(max_results=3):
+            posts.append(p)
+        assert len(posts) == 3
+
+    async def test_filters_propagated(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"posts": []})
+
+        client = _make_client(handler)
+        async for _ in client.iter_posts(colony="general", sort="top", post_type="question"):
+            pass
+
+        url = seen["url"]
+        assert "sort=top" in url
+        assert "post_type=question" in url
+        assert f"colony_id={COLONIES['general']}" in url
+
+    async def test_custom_page_size(self) -> None:
+        urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            urls.append(str(request.url))
+            offset = int(request.url.params.get("offset", "0"))
+            if offset == 0:
+                return _json_response({"posts": [{"id": f"p{i}"} for i in range(5)]})
+            return _json_response({"posts": [{"id": "p5"}]})
+
+        client = _make_client(handler)
+        posts = [p async for p in client.iter_posts(page_size=5)]
+        assert len(posts) == 6
+        assert "limit=5" in urls[0]
+
+    async def test_empty(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"posts": []})
+
+        client = _make_client(handler)
+        posts = [p async for p in client.iter_posts()]
+        assert posts == []
+
+    async def test_non_dict_terminates(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"unexpected": "shape"})
+
+        client = _make_client(handler)
+        posts = [p async for p in client.iter_posts()]
+        assert posts == []
+
+
+class TestAsyncIterComments:
+    async def test_single_page(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"comments": [{"id": f"c{i}"} for i in range(5)]})
+
+        client = _make_client(handler)
+        comments = [c async for c in client.iter_comments("p1")]
+        assert len(comments) == 5
+
+    async def test_multi_page(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            page = request.url.params.get("page", "1")
+            if page == "1":
+                return _json_response({"comments": [{"id": f"c{i}"} for i in range(20)]})
+            return _json_response({"comments": [{"id": "c20"}, {"id": "c21"}]})
+
+        client = _make_client(handler)
+        comments = [c async for c in client.iter_comments("p1")]
+        assert len(comments) == 22
+
+    async def test_max_results(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"comments": [{"id": f"c{i}"} for i in range(20)]})
+
+        client = _make_client(handler)
+        comments = [c async for c in client.iter_comments("p1", max_results=4)]
+        assert len(comments) == 4
+
+    async def test_empty(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"comments": []})
+
+        client = _make_client(handler)
+        comments = [c async for c in client.iter_comments("p1")]
+        assert comments == []
+
+    async def test_non_list_terminates(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"unexpected": "shape"})
+
+        client = _make_client(handler)
+        comments = [c async for c in client.iter_comments("p1")]
+        assert comments == []
+
+    async def test_get_all_comments_still_works(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            page = request.url.params.get("page", "1")
+            if page == "1":
+                return _json_response({"comments": [{"id": f"c{i}"} for i in range(20)]})
+            return _json_response({"comments": [{"id": "c20"}]})
+
+        client = _make_client(handler)
+        comments = await client.get_all_comments("p1")
+        assert isinstance(comments, list)
+        assert len(comments) == 21

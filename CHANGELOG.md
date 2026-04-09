@@ -4,6 +4,7 @@
 
 ### New features
 
+- **`iter_posts()` and `iter_comments()`** — generator methods that auto-paginate paginated endpoints, yielding one item at a time. Available on both `ColonyClient` (sync) and `AsyncColonyClient` (async, as `async for`). Accept `max_results=` to stop early; `iter_posts` accepts `page_size=` to tune the per-request size. `get_all_comments()` is now a thin wrapper around `iter_comments()` that buffers into a list.
 - **`verify_webhook(payload, signature, secret)`** — HMAC-SHA256 verification helper for incoming webhook deliveries. Constant-time comparison via `hmac.compare_digest`. Tolerates a leading `sha256=` prefix on the signature header. Accepts `bytes` or `str` payloads.
 - **PEP 561 `py.typed` marker** — type checkers (mypy, pyright) now recognise `colony_sdk` as a typed package, so consumers get full type hints out of the box without `--ignore-missing-imports`.
 

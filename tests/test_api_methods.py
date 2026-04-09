@@ -1395,3 +1395,175 @@ class TestRetryConfig:
         assert mock_urlopen.call_count == 5
         # Two real backoff sleeps for the 429 retries (token refresh has no sleep)
         assert mock_sleep.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Pagination iterators
+# ---------------------------------------------------------------------------
+
+
+class TestIterPosts:
+    @patch("colony_sdk.client.urlopen")
+    def test_single_page_under_limit(self, mock_urlopen: MagicMock) -> None:
+        # Server returns 3 posts; page_size is 20 → no second request
+        mock_urlopen.return_value = _mock_response({"posts": [{"id": f"p{i}"} for i in range(3)]})
+        client = _authed_client()
+
+        posts = list(client.iter_posts())
+        assert len(posts) == 3
+        assert [p["id"] for p in posts] == ["p0", "p1", "p2"]
+        assert mock_urlopen.call_count == 1
+
+    @patch("colony_sdk.client.urlopen")
+    def test_multi_page_full(self, mock_urlopen: MagicMock) -> None:
+        # Two full pages of 20, then a partial page of 5
+        page1 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(20)]})
+        page2 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(20, 40)]})
+        page3 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(40, 45)]})
+        mock_urlopen.side_effect = [page1, page2, page3]
+        client = _authed_client()
+
+        posts = list(client.iter_posts())
+        assert len(posts) == 45
+        assert posts[0]["id"] == "p0"
+        assert posts[-1]["id"] == "p44"
+        assert mock_urlopen.call_count == 3
+        # Verify offsets in URLs
+        urls = [c.args[0].full_url for c in mock_urlopen.call_args_list]
+        assert "offset" not in urls[0]  # first request omits offset=0
+        assert "offset=20" in urls[1]
+        assert "offset=40" in urls[2]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_max_results_stops_early(self, mock_urlopen: MagicMock) -> None:
+        page1 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(20)]})
+        mock_urlopen.return_value = page1
+        client = _authed_client()
+
+        posts = list(client.iter_posts(max_results=5))
+        assert len(posts) == 5
+        # Only one HTTP call — we stopped before exhausting the first page
+        assert mock_urlopen.call_count == 1
+
+    @patch("colony_sdk.client.urlopen")
+    def test_max_results_across_pages(self, mock_urlopen: MagicMock) -> None:
+        page1 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(20)]})
+        page2 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(20, 40)]})
+        mock_urlopen.side_effect = [page1, page2]
+        client = _authed_client()
+
+        posts = list(client.iter_posts(max_results=25))
+        assert len(posts) == 25
+        assert posts[-1]["id"] == "p24"
+        assert mock_urlopen.call_count == 2
+
+    @patch("colony_sdk.client.urlopen")
+    def test_empty_response(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"posts": []})
+        client = _authed_client()
+
+        posts = list(client.iter_posts())
+        assert posts == []
+        assert mock_urlopen.call_count == 1
+
+    @patch("colony_sdk.client.urlopen")
+    def test_filters_propagated(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"posts": []})
+        client = _authed_client()
+
+        list(
+            client.iter_posts(
+                colony="general",
+                sort="top",
+                post_type="question",
+                tag="ai",
+                search="agents",
+            )
+        )
+        url = _last_request(mock_urlopen).full_url
+        assert "sort=top" in url
+        assert "post_type=question" in url
+        assert "tag=ai" in url
+        assert "search=agents" in url
+        assert f"colony_id={COLONIES['general']}" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_custom_page_size(self, mock_urlopen: MagicMock) -> None:
+        # page_size=5 → first response has exactly 5, server-style "full page"
+        page1 = _mock_response({"posts": [{"id": f"p{i}"} for i in range(5)]})
+        page2 = _mock_response({"posts": [{"id": "p5"}, {"id": "p6"}]})  # partial
+        mock_urlopen.side_effect = [page1, page2]
+        client = _authed_client()
+
+        posts = list(client.iter_posts(page_size=5))
+        assert len(posts) == 7
+        urls = [c.args[0].full_url for c in mock_urlopen.call_args_list]
+        assert "limit=5" in urls[0]
+        assert "limit=5" in urls[1]
+        assert "offset=5" in urls[1]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_non_dict_response_terminates(self, mock_urlopen: MagicMock) -> None:
+        # Edge case: server returns something weird that isn't a dict-with-posts
+        mock_urlopen.return_value = _mock_response({"unexpected": "shape"})
+        client = _authed_client()
+
+        posts = list(client.iter_posts())
+        assert posts == []
+
+
+class TestIterComments:
+    @patch("colony_sdk.client.urlopen")
+    def test_single_page(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"comments": [{"id": f"c{i}"} for i in range(5)]})
+        client = _authed_client()
+
+        comments = list(client.iter_comments("p1"))
+        assert len(comments) == 5
+        assert mock_urlopen.call_count == 1
+
+    @patch("colony_sdk.client.urlopen")
+    def test_multi_page_paginates_via_page_param(self, mock_urlopen: MagicMock) -> None:
+        page1 = _mock_response({"comments": [{"id": f"c{i}"} for i in range(20)]})
+        page2 = _mock_response({"comments": [{"id": "c20"}, {"id": "c21"}]})
+        mock_urlopen.side_effect = [page1, page2]
+        client = _authed_client()
+
+        comments = list(client.iter_comments("p1"))
+        assert len(comments) == 22
+        urls = [c.args[0].full_url for c in mock_urlopen.call_args_list]
+        assert "page=1" in urls[0]
+        assert "page=2" in urls[1]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_max_results(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"comments": [{"id": f"c{i}"} for i in range(20)]})
+        client = _authed_client()
+
+        comments = list(client.iter_comments("p1", max_results=3))
+        assert len(comments) == 3
+        assert mock_urlopen.call_count == 1
+
+    @patch("colony_sdk.client.urlopen")
+    def test_empty_response(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"comments": []})
+        client = _authed_client()
+        assert list(client.iter_comments("p1")) == []
+
+    @patch("colony_sdk.client.urlopen")
+    def test_non_list_terminates(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"unexpected": "shape"})
+        client = _authed_client()
+        assert list(client.iter_comments("p1")) == []
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_all_comments_still_works(self, mock_urlopen: MagicMock) -> None:
+        # Verify the existing get_all_comments API still works after refactor
+        page1 = _mock_response({"comments": [{"id": f"c{i}"} for i in range(20)]})
+        page2 = _mock_response({"comments": [{"id": "c20"}, {"id": "c21"}]})
+        mock_urlopen.side_effect = [page1, page2]
+        client = _authed_client()
+
+        comments = client.get_all_comments("p1")
+        assert isinstance(comments, list)
+        assert len(comments) == 22
