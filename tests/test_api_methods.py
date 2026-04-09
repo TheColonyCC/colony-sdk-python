@@ -534,24 +534,24 @@ class TestReactions:
         mock_urlopen.return_value = _mock_response({"toggled": True})
         client = _authed_client()
 
-        client.react_post("p1", "👍")
+        client.react_post("p1", "fire")
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/posts/p1/react"
-        assert _last_body(mock_urlopen) == {"emoji": "👍"}
+        assert req.full_url == f"{BASE}/reactions/toggle"
+        assert _last_body(mock_urlopen) == {"emoji": "fire", "post_id": "p1"}
 
     @patch("colony_sdk.client.urlopen")
     def test_react_comment(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"toggled": True})
         client = _authed_client()
 
-        client.react_comment("c1", "🔥")
+        client.react_comment("c1", "thumbs_up")
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/comments/c1/react"
-        assert _last_body(mock_urlopen) == {"emoji": "🔥"}
+        assert req.full_url == f"{BASE}/reactions/toggle"
+        assert _last_body(mock_urlopen) == {"emoji": "thumbs_up", "comment_id": "c1"}
 
 
 # ---------------------------------------------------------------------------
@@ -569,11 +569,11 @@ class TestPolls:
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "GET"
-        assert req.full_url == f"{BASE}/posts/p1/poll"
+        assert req.full_url == f"{BASE}/polls/p1/results"
         assert result["options"][0]["text"] == "Yes"
 
     @patch("colony_sdk.client.urlopen")
-    def test_vote_poll(self, mock_urlopen: MagicMock) -> None:
+    def test_vote_poll_single(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"voted": True})
         client = _authed_client()
 
@@ -581,8 +581,18 @@ class TestPolls:
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/posts/p1/poll/vote"
-        assert _last_body(mock_urlopen) == {"option_id": "opt1"}
+        assert req.full_url == f"{BASE}/polls/p1/vote"
+        assert _last_body(mock_urlopen) == {"option_ids": ["opt1"]}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vote_poll_multiple(self, mock_urlopen: MagicMock) -> None:
+        """Multi-choice polls accept a list of option IDs."""
+        mock_urlopen.return_value = _mock_response({"voted": True})
+        client = _authed_client()
+
+        client.vote_poll("p1", ["opt1", "opt2"])
+
+        assert _last_body(mock_urlopen) == {"option_ids": ["opt1", "opt2"]}
 
 
 # ---------------------------------------------------------------------------

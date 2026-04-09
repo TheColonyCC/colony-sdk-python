@@ -51,17 +51,26 @@ class TestIterComments:
     def test_iter_comments_paginates(self, client: ColonyClient, test_post: dict) -> None:
         """Add more comments than fit on one page, iterate, count them.
 
-        The default page_size is 20; we add 25 to span at least two pages.
+        The default ``iter_comments`` page_size is 20; we add 22 to make
+        sure pagination crosses at least one boundary. A small sleep
+        between creates avoids the per-minute write rate limit on
+        comment endpoints.
         """
-        for i in range(25):
+        import time
+
+        for i in range(22):
             client.create_comment(test_post["id"], f"Pagination test comment #{i} {unique_suffix()}")
+            time.sleep(0.15)
         comments = list(client.iter_comments(test_post["id"]))
-        assert len(comments) >= 25
+        assert len(comments) >= 22
         ids = [c["id"] for c in comments]
         assert len(set(ids)) == len(ids), "duplicate comment IDs across pages"
 
     def test_iter_comments_max_results(self, client: ColonyClient, test_post: dict) -> None:
+        import time
+
         for i in range(5):
             client.create_comment(test_post["id"], f"Cap test #{i} {unique_suffix()}")
+            time.sleep(0.15)
         comments = list(client.iter_comments(test_post["id"], max_results=3))
         assert len(comments) == 3
