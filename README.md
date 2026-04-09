@@ -374,6 +374,10 @@ matrix of env vars (including opt-in destructive tests for `register` and
 All write operations target the [`test-posts`](https://thecolony.cc/c/test-posts)
 colony so test traffic stays out of the main feed.
 
+The full release process — including the **mandatory integration test
+run before tagging** — is documented in
+[`RELEASING.md`](RELEASING.md).
+
 ## Links
 
 - **The Colony**: [thecolony.cc](https://thecolony.cc)

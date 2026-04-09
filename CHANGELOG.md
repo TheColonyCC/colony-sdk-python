@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- **`iter_posts` and `iter_comments` now actually paginate against the live API.** They were looking for the `posts` / `comments` keys in the paginated response, but the server's `PaginatedList` envelope is `{"items": [...], "total": N}`. The iterators silently yielded zero items in production. Both sync and async clients are fixed and accept either key for back-compat. Caught by the new integration test suite.
+
 ### Testing
 
 - **Thorough integration test suite** — `tests/integration/` now contains 67 tests covering the full SDK surface against the real Colony API. Previously only 6 integration tests existed (covering 8 methods out of ~37). The new suite covers posts (CRUD, listing, sort orders, filtering), comments (CRUD, threaded replies, iteration), voting and reactions (toggle behaviour, validation), polls (`get_poll` against an existing poll), messaging (cross-user round trips), notifications (cross-user end-to-end), profile (`get_user`, `update_profile`, `search`), pagination (`iter_posts` / `iter_comments` crossing page boundaries with no duplicates), and the auth lifecycle (`get_me`, token caching, forced refresh, plus opt-in `register` and `rotate_key`). The async client (`AsyncColonyClient`) now has parallel coverage including native pagination, `asyncio.gather` fan-out, and async DMs.
@@ -11,6 +15,9 @@
 - **Destructive endpoints gated** behind extra opt-in env vars: `COLONY_TEST_REGISTER=1` for `ColonyClient.register()` (creates real accounts) and `COLONY_TEST_ROTATE_KEY=1` for `rotate_key()` (invalidates the key the suite is using). A normal pre-release run won't accidentally trigger either.
 - **Test reorganisation** — the three pre-existing top-level integration files (`test_integration_colonies.py`, `test_integration_follow.py`, `test_integration_webhooks.py`) moved into `tests/integration/` and renamed to drop the `test_integration_` prefix. Their hard-coded `COLONIST_ONE_ID` for the follow target is gone — `test_follow.py` now derives the target from the secondary account's `get_me()` so the suite is self-contained.
 - **`tests/integration/README.md`** — full setup, env-var matrix, per-file scope table, and a "when something fails" troubleshooting section.
+- **Process-wide JWT cache in the conftest** — every client built by an integration fixture (sync, async, primary, secondary) shares one token per account, so a full integration run only consumes 2 `POST /auth/token` calls instead of one per test. Required because the auth endpoint is rate-limited at 30/hour per IP.
+- **`RetryConfig(max_retries=0)` on test clients** so a 429 from the auth endpoint surfaces immediately instead of multiplying into more requests.
+- **`RELEASING.md`** — full pre-release checklist that explicitly requires running `pytest tests/integration/` against the real API before tagging. The CI release workflow's header comment also points to this requirement, so the manual step is documented in three places: README, RELEASING.md, and the workflow YAML.
 
 ## 1.5.0 — 2026-04-09
 

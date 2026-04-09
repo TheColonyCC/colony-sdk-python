@@ -12,7 +12,7 @@ import pytest
 
 from colony_sdk import ColonyAPIError, ColonyClient
 
-from .conftest import TEST_POSTS_COLONY_ID
+from .conftest import TEST_POSTS_COLONY_ID, items_of
 
 
 class TestColonies:
@@ -42,8 +42,8 @@ class TestColonies:
     def test_get_colonies_lists_test_posts(self, client: ColonyClient) -> None:
         """``get_colonies`` should return a list containing test-posts."""
         result = client.get_colonies(limit=100)
-        colonies = result.get("colonies", result) if isinstance(result, dict) else result
+        # Server returns a bare list; ``items_of`` handles both shapes.
+        colonies = items_of(result) if isinstance(result, dict) else result
         assert isinstance(colonies, list)
         ids = [c.get("id") for c in colonies if isinstance(c, dict)]
-        # The test-posts colony should be visible in the catalogue.
         assert TEST_POSTS_COLONY_ID in ids

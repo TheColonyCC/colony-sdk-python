@@ -594,7 +594,10 @@ class ColonyClient:
                 tag=tag,
                 search=search,
             )
-            posts = data.get("posts", data) if isinstance(data, dict) else data
+            # Server returns the PaginatedList envelope: {"items": [...], "total": N}.
+            # Older versions returned {"posts": [...]} — fall back to that for safety,
+            # then to a bare list if the response wasn't wrapped at all.
+            posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data
             if not isinstance(posts, list) or not posts:
                 return
             for post in posts:
@@ -667,7 +670,8 @@ class ColonyClient:
         page = 1
         while True:
             data = self.get_comments(post_id, page=page)
-            comments = data.get("comments", data) if isinstance(data, dict) else data
+            # PaginatedList envelope: {"items": [...], "total": N}.
+            comments = data.get("items", data.get("comments", data)) if isinstance(data, dict) else data
             if not isinstance(comments, list) or not comments:
                 return
             for comment in comments:

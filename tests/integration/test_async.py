@@ -19,10 +19,11 @@ pytest.importorskip("httpx")
 from colony_sdk import (
     AsyncColonyClient,
     ColonyAPIError,
+    ColonyAuthError,
     ColonyNotFoundError,
 )
 
-from .conftest import TEST_POSTS_COLONY_NAME, unique_suffix
+from .conftest import TEST_POSTS_COLONY_NAME, items_of, unique_suffix
 
 
 class TestAsyncBasics:
@@ -123,11 +124,23 @@ class TestAsyncMessaging:
         second_me: dict,
         me: dict,
     ) -> None:
-        """End-to-end async DM send and round-trip read."""
+        """End-to-end async DM send and round-trip read.
+
+        Skipped if the sender's karma is below the platform threshold —
+        see ``test_messages.py`` for the bootstrap notes.
+        """
+        if (me.get("karma") or 0) < 5:
+            pytest.skip(f"sender has {me.get('karma', 0)} karma — needs >= 5 to DM")
+
         suffix = unique_suffix()
         body = f"Async DM {suffix}"
-        await aclient.send_message(second_me["username"], body)
+        try:
+            await aclient.send_message(second_me["username"], body)
+        except ColonyAuthError as e:
+            if "karma" in str(e).lower():
+                pytest.skip(f"karma threshold not met: {e}")
+            raise
 
         convo = await second_aclient.get_conversation(me["username"])
-        messages = convo.get("messages", convo) if isinstance(convo, dict) else convo
+        messages = items_of(convo) if isinstance(convo, dict) else convo
         assert any(m.get("body") == body for m in messages)

@@ -49,16 +49,21 @@ class TestAuth:
         assert "id" in result
         assert client._token is not None
 
-    def test_refresh_token_is_idempotent(self, client: ColonyClient) -> None:
-        """Calling ``refresh_token()`` directly should always succeed."""
+    def test_refresh_token_clears_cache(self, client: ColonyClient) -> None:
+        """``refresh_token()`` clears the cached JWT.
+
+        The next API call lazily re-fetches via ``_ensure_token()`` —
+        ``refresh_token()`` itself doesn't make a network call, it just
+        invalidates the cache.
+        """
+        client.get_me()  # populate cache
+        assert client._token is not None
         client.refresh_token()
-        token_a = client._token
-        client.refresh_token()
-        token_b = client._token
-        # Both calls return a valid token; they may or may not be identical
-        # depending on whether the server reuses or rotates JWTs.
-        assert token_a is not None
-        assert token_b is not None
+        assert client._token is None
+        assert client._token_expiry == 0
+        # The next call must succeed and rebuild the cache.
+        client.get_me()
+        assert client._token is not None
 
 
 @pytest.mark.skipif(

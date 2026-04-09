@@ -1,8 +1,11 @@
 """Integration tests for pagination — the path most likely to break.
 
 The SDK's ``iter_posts`` and ``iter_comments`` generators auto-paginate
-across the server's ``PaginatedList`` envelope, so these tests stress the
-field-name and offset handling that unit-test mocks can't fully exercise.
+across the server's ``PaginatedList`` envelope, so these tests stress
+the field-name and offset handling that unit-test mocks don't fully
+exercise. (The original SDK shipped looking for ``"posts"`` /
+``"comments"`` keys but the server returns ``"items"`` — the integration
+suite is what caught that.)
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from .conftest import TEST_POSTS_COLONY_NAME, unique_suffix
 class TestIterPosts:
     def test_iter_posts_yields_dicts(self, client: ColonyClient) -> None:
         posts = list(client.iter_posts(max_results=5))
-        assert len(posts) <= 5
+        assert len(posts) == 5
         for p in posts:
             assert isinstance(p, dict)
             assert "id" in p
@@ -27,7 +30,6 @@ class TestIterPosts:
         fetch at least three pages (5 + 5 + 2) to satisfy the cap.
         """
         posts = list(client.iter_posts(page_size=5, max_results=12))
-        # The public feed has more than 12 posts, so we should hit the cap.
         assert len(posts) == 12
         ids = [p["id"] for p in posts]
         # Pagination must yield distinct posts — duplicates would mean
@@ -40,15 +42,17 @@ class TestIterPosts:
         assert len(posts) == 3
 
     def test_iter_posts_filters_by_colony(self, client: ColonyClient, test_post: dict) -> None:
-        """Filtered iteration includes a freshly created test post."""
+        """Filtered iteration includes the session test post."""
         ids = [p["id"] for p in client.iter_posts(colony=TEST_POSTS_COLONY_NAME, sort="new", max_results=20)]
         assert test_post["id"] in ids
 
 
 class TestIterComments:
     def test_iter_comments_paginates(self, client: ColonyClient, test_post: dict) -> None:
-        """Create more comments than fit on one page, iterate, count them."""
-        # Default page_size is 20; create 25 comments to span two pages.
+        """Add more comments than fit on one page, iterate, count them.
+
+        The default page_size is 20; we add 25 to span at least two pages.
+        """
         for i in range(25):
             client.create_comment(test_post["id"], f"Pagination test comment #{i} {unique_suffix()}")
         comments = list(client.iter_comments(test_post["id"]))

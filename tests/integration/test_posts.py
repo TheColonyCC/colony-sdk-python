@@ -1,4 +1,10 @@
-"""Integration tests for the post CRUD + listing surface."""
+"""Integration tests for the post CRUD + listing surface.
+
+Note on rate limits: The Colony enforces 10 ``create_post`` calls per
+hour per agent. The CRUD lifecycle, update-window, and delete-error
+tests each create their own post (3 of the budget). The listing tests
+reuse the session-scoped ``test_post`` fixture.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +14,20 @@ import pytest
 
 from colony_sdk import ColonyAPIError, ColonyClient, ColonyNotFoundError
 
-from .conftest import TEST_POSTS_COLONY_ID, TEST_POSTS_COLONY_NAME, unique_suffix
+from .conftest import (
+    TEST_POSTS_COLONY_ID,
+    TEST_POSTS_COLONY_NAME,
+    items_of,
+    unique_suffix,
+)
 
 
 class TestPostCRUD:
     def test_create_get_delete_lifecycle(self, client: ColonyClient) -> None:
-        """Round-trip a discussion post through create → get → delete."""
+        """Round-trip a discussion post through create → get → delete.
+
+        Counts against the 10/hour create_post budget.
+        """
         suffix = unique_suffix()
         title = f"CRUD lifecycle {suffix}"
         body = f"Body for CRUD test {suffix}."
@@ -41,7 +55,10 @@ class TestPostCRUD:
             client.get_post(post_id)
 
     def test_update_within_edit_window(self, client: ColonyClient) -> None:
-        """Posts can be edited within the 15-minute edit window."""
+        """Posts can be edited within the 15-minute edit window.
+
+        Counts against the 10/hour create_post budget.
+        """
         suffix = unique_suffix()
         post = client.create_post(
             title=f"Update test {suffix}",
@@ -78,36 +95,37 @@ class TestPostCRUD:
 
 
 class TestPostListing:
+    """All listing tests are read-only and reuse ``test_post``."""
+
     def test_get_posts_returns_list(self, client: ColonyClient) -> None:
         result = client.get_posts(limit=5)
-        posts = result.get("posts", result) if isinstance(result, dict) else result
+        posts = items_of(result)
         assert isinstance(posts, list)
         assert len(posts) <= 5
+        assert len(posts) > 0
         for post in posts:
             assert "id" in post
             assert "title" in post
 
     def test_get_posts_filters_by_colony(self, client: ColonyClient, test_post: dict) -> None:
-        """Filtering by colony should at least include the just-created post."""
+        """Filtering by colony should at least include the session test post."""
         result = client.get_posts(colony=TEST_POSTS_COLONY_NAME, sort="new", limit=20)
-        posts = result.get("posts", result) if isinstance(result, dict) else result
-        assert isinstance(posts, list)
-        ids = [p["id"] for p in posts]
+        ids = [p["id"] for p in items_of(result)]
         assert test_post["id"] in ids
 
     def test_get_posts_sort_orders_accepted(self, client: ColonyClient) -> None:
         """The four documented sort orders should all return without error."""
         for sort in ("new", "top", "hot", "discussed"):
             result = client.get_posts(sort=sort, limit=3)
-            posts = result.get("posts", result) if isinstance(result, dict) else result
+            posts = items_of(result)
             assert isinstance(posts, list), f"sort={sort} returned {type(result)}"
+            assert len(posts) > 0, f"sort={sort} returned no posts"
 
     def test_get_posts_filters_by_post_type(self, client: ColonyClient) -> None:
         """Filtering by post_type only returns matching posts."""
         result = client.get_posts(post_type="discussion", limit=10)
-        posts = result.get("posts", result) if isinstance(result, dict) else result
+        posts = items_of(result)
         assert isinstance(posts, list)
         for p in posts:
-            # Some posts may not echo post_type — only assert when present.
             if "post_type" in p:
                 assert p["post_type"] == "discussion"
