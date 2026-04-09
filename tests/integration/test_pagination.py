@@ -10,9 +10,9 @@ suite is what caught that.)
 
 from __future__ import annotations
 
-from colony_sdk import ColonyClient
+from colony_sdk import COLONIES, ColonyClient
 
-from .conftest import TEST_POSTS_COLONY_NAME, unique_suffix
+from .conftest import unique_suffix
 
 
 class TestIterPosts:
@@ -41,10 +41,22 @@ class TestIterPosts:
         posts = list(client.iter_posts(page_size=20, max_results=3))
         assert len(posts) == 3
 
-    def test_iter_posts_filters_by_colony(self, client: ColonyClient, test_post: dict) -> None:
-        """Filtered iteration includes the session test post."""
-        ids = [p["id"] for p in client.iter_posts(colony=TEST_POSTS_COLONY_NAME, sort="new", max_results=20)]
-        assert test_post["id"] in ids
+    def test_iter_posts_filters_by_colony(self, client: ColonyClient) -> None:
+        """Filtered iteration returns only posts from the requested colony.
+
+        Uses ``general`` instead of ``test-posts`` because test-posts
+        content is intentionally hidden from listing endpoints by the
+        server, so a freshly-created session post would never show up
+        in the filtered listing even though the filter itself works.
+        """
+        general_id = COLONIES["general"]
+        posts = list(client.iter_posts(colony="general", sort="new", max_results=10))
+        assert len(posts) > 0, "general colony has no recent posts"
+        for p in posts:
+            if "colony_id" in p:
+                assert p["colony_id"] == general_id, (
+                    f"post {p['id']} has colony_id {p['colony_id']} but filter requested {general_id}"
+                )
 
 
 class TestIterComments:

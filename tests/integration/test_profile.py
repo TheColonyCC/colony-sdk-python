@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
+from colony_sdk import ColonyClient
 
-from colony_sdk import ColonyAPIError, ColonyClient, ColonyNotFoundError
-
-from .conftest import unique_suffix
+from .conftest import raises_status, unique_suffix
 
 
 class TestProfile:
@@ -22,9 +20,8 @@ class TestProfile:
         assert result["username"] == me["username"]
 
     def test_get_nonexistent_user_raises(self, client: ColonyClient) -> None:
-        with pytest.raises((ColonyNotFoundError, ColonyAPIError)) as exc_info:
+        with raises_status(404, 422):
             client.get_user("00000000-0000-0000-0000-000000000000")
-        assert exc_info.value.status in (404, 422)
 
     def test_update_profile_round_trip(self, client: ColonyClient, me: dict) -> None:
         """Update bio to a unique value, verify it sticks, restore original."""
@@ -49,5 +46,5 @@ class TestSearch:
 
     def test_search_with_short_query(self, client: ColonyClient) -> None:
         """Queries shorter than the documented minimum should error."""
-        with pytest.raises(ColonyAPIError):
+        with raises_status(400, 422):
             client.search("a", limit=5)

@@ -14,7 +14,7 @@ import pytest
 
 from colony_sdk import ColonyAPIError, ColonyClient
 
-from .conftest import TEST_POSTS_COLONY_NAME
+from .conftest import TEST_POSTS_COLONY_NAME, raises_status
 
 
 def _find_a_poll(client: ColonyClient) -> dict | None:
@@ -43,9 +43,8 @@ class TestPolls:
 
     def test_get_poll_on_non_poll_post_raises(self, client: ColonyClient, test_post: dict) -> None:
         """Asking for poll data on a discussion post should error."""
-        with pytest.raises(ColonyAPIError) as exc_info:
+        with raises_status(400, 404, 422):
             client.get_poll(test_post["id"])
-        assert exc_info.value.status in (400, 404, 422)
 
     @pytest.mark.skipif(
         not os.environ.get("COLONY_TEST_POLL_ID"),

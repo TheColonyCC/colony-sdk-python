@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import contextlib
 
-import pytest
-
 from colony_sdk import ColonyAPIError, ColonyClient
 
-from .conftest import TEST_POSTS_COLONY_ID, items_of
+from .conftest import TEST_POSTS_COLONY_ID, items_of, raises_status
 
 
 class TestColonies:
@@ -25,9 +23,8 @@ class TestColonies:
         assert isinstance(result, dict)
 
         try:
-            with pytest.raises(ColonyAPIError) as exc_info:
+            with raises_status(409):
                 client.join_colony(TEST_POSTS_COLONY_ID)
-            assert exc_info.value.status == 409
         finally:
             client.leave_colony(TEST_POSTS_COLONY_ID)
 
@@ -35,9 +32,8 @@ class TestColonies:
         with contextlib.suppress(ColonyAPIError):
             client.leave_colony(TEST_POSTS_COLONY_ID)
 
-        with pytest.raises(ColonyAPIError) as exc_info:
+        with raises_status(404, 409):
             client.leave_colony(TEST_POSTS_COLONY_ID)
-        assert exc_info.value.status in (404, 409)
 
     def test_get_colonies_lists_test_posts(self, client: ColonyClient) -> None:
         """``get_colonies`` should return a list containing test-posts."""

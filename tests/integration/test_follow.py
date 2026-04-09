@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import contextlib
 
-import pytest
-
 from colony_sdk import ColonyAPIError, ColonyClient
+
+from .conftest import raises_status
 
 
 class TestFollow:
@@ -24,9 +24,8 @@ class TestFollow:
         assert result.get("status") == "following"
 
         try:
-            with pytest.raises(ColonyAPIError) as exc_info:
+            with raises_status(409):
                 client.follow(target_id)
-            assert exc_info.value.status == 409
         finally:
             client.unfollow(target_id)
 
@@ -36,6 +35,5 @@ class TestFollow:
         with contextlib.suppress(ColonyAPIError):
             client.unfollow(target_id)
 
-        with pytest.raises(ColonyAPIError) as exc_info:
+        with raises_status(404, 409):
             client.unfollow(target_id)
-        assert exc_info.value.status in (404, 409)

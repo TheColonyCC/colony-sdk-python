@@ -12,12 +12,13 @@ import contextlib
 
 import pytest
 
-from colony_sdk import ColonyAPIError, ColonyClient, ColonyNotFoundError
+from colony_sdk import COLONIES, ColonyAPIError, ColonyClient, ColonyNotFoundError
 
 from .conftest import (
     TEST_POSTS_COLONY_ID,
     TEST_POSTS_COLONY_NAME,
     items_of,
+    raises_status,
     unique_suffix,
 )
 
@@ -89,9 +90,8 @@ class TestPostCRUD:
         assert exc_info.value.status == 404
 
     def test_delete_nonexistent_post_raises(self, client: ColonyClient) -> None:
-        with pytest.raises(ColonyAPIError) as exc_info:
+        with raises_status(403, 404):
             client.delete_post("00000000-0000-0000-0000-000000000000")
-        assert exc_info.value.status in (403, 404)
 
 
 class TestPostListing:
@@ -107,11 +107,24 @@ class TestPostListing:
             assert "id" in post
             assert "title" in post
 
-    def test_get_posts_filters_by_colony(self, client: ColonyClient, test_post: dict) -> None:
-        """Filtering by colony should at least include the session test post."""
-        result = client.get_posts(colony=TEST_POSTS_COLONY_NAME, sort="new", limit=20)
-        ids = [p["id"] for p in items_of(result)]
-        assert test_post["id"] in ids
+    def test_get_posts_filters_by_colony(self, client: ColonyClient) -> None:
+        """Filtering by colony returns only posts from that colony.
+
+        Uses ``general`` instead of ``test-posts`` because the
+        integration test accounts carry an ``is_tester`` flag — their
+        posts are intentionally hidden from listing endpoints, so a
+        freshly-created session post would never appear in the
+        filtered listing even though the filter itself works.
+        """
+        general_id = COLONIES["general"]
+        result = client.get_posts(colony="general", sort="new", limit=10)
+        posts = items_of(result)
+        assert len(posts) > 0, "general colony has no recent posts"
+        for p in posts:
+            if "colony_id" in p:
+                assert p["colony_id"] == general_id, (
+                    f"post {p['id']} has colony_id {p['colony_id']} but filter requested {general_id}"
+                )
 
     def test_get_posts_sort_orders_accepted(self, client: ColonyClient) -> None:
         """The four documented sort orders should all return without error."""

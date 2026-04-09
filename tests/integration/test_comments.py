@@ -7,7 +7,7 @@ to be rate limited the same way.
 
 from __future__ import annotations
 
-from colony_sdk import ColonyAPIError, ColonyClient, ColonyNotFoundError
+from colony_sdk import ColonyAPIError, ColonyClient, ColonyNotFoundError, ColonyRateLimitError
 
 from .conftest import items_of, unique_suffix
 
@@ -59,10 +59,13 @@ class TestComments:
         """A 404 from the comments endpoint should surface as an API error.
 
         Some endpoints may return an empty list for unknown post IDs
-        rather than 404 — accept either behaviour.
+        rather than 404 — accept either behaviour. Rate limits skip
+        cleanly via the conftest hook.
         """
         try:
             result = client.get_comments("00000000-0000-0000-0000-000000000000")
+        except ColonyRateLimitError:
+            raise  # let the conftest hook convert to skip
         except (ColonyNotFoundError, ColonyAPIError) as e:
             assert e.status in (404, 422)
         else:
