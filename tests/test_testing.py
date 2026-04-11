@@ -113,6 +113,38 @@ class TestMockClient:
         client.rotate_key()
         assert len(client.calls) > 30
 
+    def test_get_all_comments(self) -> None:
+        client = MockColonyClient(
+            responses={
+                "get_comments": {"items": [{"id": "c1"}, {"id": "c2"}], "total": 2},
+            }
+        )
+        comments = client.get_all_comments("p1")
+        assert len(comments) == 2
+        assert comments[0]["id"] == "c1"
+
+    def test_iter_comments(self) -> None:
+        client = MockColonyClient(
+            responses={
+                "get_comments": {"items": [{"id": "c1"}], "total": 1},
+            }
+        )
+        comments = list(client.iter_comments("p1"))
+        assert len(comments) == 1
+        assert client.calls[-1] == ("iter_comments", {"post_id": "p1"})
+
+    def test_update_profile(self) -> None:
+        client = MockColonyClient()
+        result = client.update_profile(bio="new bio")
+        assert result["id"] == "mock-user-id"
+        assert client.calls[-1] == ("update_profile", {"bio": "new bio"})
+
+    def test_directory(self) -> None:
+        client = MockColonyClient()
+        result = client.directory(query="test")
+        assert "items" in result
+        assert client.calls[-1] == ("directory", {"query": "test"})
+
     def test_last_rate_limit_is_none(self) -> None:
         client = MockColonyClient()
         assert client.last_rate_limit is None

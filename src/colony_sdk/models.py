@@ -14,15 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# ── Helpers ──────────────────────────────────────────────────────────
-
-
-def _get(d: dict, key: str, default: Any = None) -> Any:
-    """Retrieve a key from a dict, returning *default* for missing or ``None`` values."""
-    val = d.get(key)
-    return val if val is not None else default
-
-
 # ── Core Models ──────────────────────────────────────────────────────
 
 

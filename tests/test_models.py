@@ -232,3 +232,136 @@ class TestRateLimitInfo:
     def test_non_numeric_ignored(self) -> None:
         info = RateLimitInfo.from_headers({"X-RateLimit-Limit": "abc"})
         assert info.limit is None
+
+
+class TestUserToDict:
+    def test_includes_optional_fields_when_set(self) -> None:
+        u = User.from_dict(
+            {
+                "id": "abc",
+                "username": "agent1",
+                "created_at": "2026-01-01",
+                "avatar_url": "https://example.com/a.png",
+                "is_following": True,
+            }
+        )
+        d = u.to_dict()
+        assert d["created_at"] == "2026-01-01"
+        assert d["avatar_url"] == "https://example.com/a.png"
+        assert d["is_following"] is True
+
+
+class TestPostToDict:
+    def test_includes_timestamps_when_set(self) -> None:
+        p = Post.from_dict(
+            {
+                "id": "p1",
+                "title": "T",
+                "body": "B",
+                "created_at": "2026-01-01",
+                "updated_at": "2026-01-02",
+            }
+        )
+        d = p.to_dict()
+        assert d["created_at"] == "2026-01-01"
+        assert d["updated_at"] == "2026-01-02"
+
+
+class TestCommentToDict:
+    def test_includes_optional_fields_when_set(self) -> None:
+        c = Comment.from_dict(
+            {
+                "id": "c1",
+                "body": "test",
+                "parent_id": "c0",
+                "created_at": "2026-01-01",
+            }
+        )
+        d = c.to_dict()
+        assert d["parent_id"] == "c0"
+        assert d["created_at"] == "2026-01-01"
+
+
+class TestMessageToDict:
+    def test_roundtrip(self) -> None:
+        m = Message.from_dict(
+            {
+                "id": "m1",
+                "body": "Hello",
+                "sender": {"id": "u1", "username": "alice"},
+                "recipient": {"id": "u2", "username": "bob"},
+                "created_at": "2026-01-01",
+            }
+        )
+        d = m.to_dict()
+        assert d["id"] == "m1"
+        assert d["sender_username"] == "alice"
+        assert d["created_at"] == "2026-01-01"
+
+
+class TestNotificationToDict:
+    def test_includes_all_optional_fields(self) -> None:
+        n = Notification.from_dict(
+            {
+                "id": "n1",
+                "type": "reply",
+                "post_id": "p1",
+                "comment_id": "c1",
+                "from_user_id": "u1",
+                "from_username": "agent1",
+                "created_at": "2026-01-01",
+            }
+        )
+        d = n.to_dict()
+        assert d["post_id"] == "p1"
+        assert d["comment_id"] == "c1"
+        assert d["from_user_id"] == "u1"
+        assert d["from_username"] == "agent1"
+        assert d["created_at"] == "2026-01-01"
+
+
+class TestColonyToDict:
+    def test_roundtrip(self) -> None:
+        c = Colony.from_dict(
+            {
+                "id": "col1",
+                "name": "general",
+                "description": "General",
+                "member_count": 50,
+                "created_at": "2026-01-01",
+            }
+        )
+        d = c.to_dict()
+        assert d["name"] == "general"
+        assert d["created_at"] == "2026-01-01"
+
+
+class TestWebhookToDict:
+    def test_roundtrip(self) -> None:
+        w = Webhook.from_dict(
+            {
+                "id": "wh1",
+                "url": "https://example.com/hook",
+                "events": ["post_created"],
+                "created_at": "2026-01-01",
+            }
+        )
+        d = w.to_dict()
+        assert d["url"] == "https://example.com/hook"
+        assert d["created_at"] == "2026-01-01"
+
+
+class TestPollResultsToDict:
+    def test_roundtrip(self) -> None:
+        p = PollResults.from_dict(
+            {
+                "post_id": "p1",
+                "total_votes": 10,
+                "is_closed": True,
+                "options": [{"id": "o1", "text": "Yes", "votes": 7}],
+            }
+        )
+        d = p.to_dict()
+        assert d["total_votes"] == 10
+        assert d["is_closed"] is True
+        assert len(d["options"]) == 1
