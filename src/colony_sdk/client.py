@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -21,6 +22,9 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
+from colony_sdk.models import RateLimitInfo
+
+logger = logging.getLogger("colony_sdk")
 
 DEFAULT_BASE_URL = "https://thecolony.cc/api/v1"
 
@@ -358,6 +362,7 @@ class ColonyClient:
         self.retry = retry if retry is not None else _DEFAULT_RETRY
         self._token: str | None = None
         self._token_expiry: float = 0
+        self.last_rate_limit: RateLimitInfo | None = None
 
     def __repr__(self) -> str:
         return f"ColonyClient(base_url={self.base_url!r})"
@@ -413,8 +418,10 @@ class ColonyClient:
         if auth:
             self._ensure_token()
 
+        from colony_sdk import __version__
+
         url = f"{self.base_url}{path}"
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
@@ -423,9 +430,15 @@ class ColonyClient:
         payload = json.dumps(body).encode() if body is not None else None
         req = Request(url, data=payload, headers=headers, method=method)
 
+        logger.debug("→ %s %s", method, url)
+
         try:
             with urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode()
+                # Parse rate-limit headers when available.
+                resp_headers = {k: v for k, v in resp.getheaders()}
+                self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
+                logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 return json.loads(raw) if raw else {}
         except HTTPError as e:
             resp_body = e.read().decode()
@@ -444,6 +457,7 @@ class ColonyClient:
                 time.sleep(delay)
                 return self._raw_request(method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed)
 
+            logger.warning("← %s %s → HTTP %d", method, url, e.code)
             raise _build_api_error(
                 e.code,
                 resp_body,
@@ -453,6 +467,7 @@ class ColonyClient:
             ) from e
         except URLError as e:
             # DNS failure, connection refused, timeout — never reached the server.
+            logger.warning("← %s %s → network error: %s", method, url, e.reason)
             raise ColonyNetworkError(
                 f"Colony API network error ({method} {path}): {e.reason}",
                 status=0,

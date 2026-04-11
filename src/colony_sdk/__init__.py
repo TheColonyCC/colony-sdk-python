@@ -37,14 +37,27 @@ from colony_sdk.client import (
     verify_webhook,
 )
 from colony_sdk.colonies import COLONIES
+from colony_sdk.models import (
+    Colony,
+    Comment,
+    Message,
+    Notification,
+    PollResults,
+    Post,
+    RateLimitInfo,
+    User,
+    Webhook,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from colony_sdk.async_client import AsyncColonyClient
+    from colony_sdk.testing import MockColonyClient
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 __all__ = [
     "COLONIES",
     "AsyncColonyClient",
+    "Colony",
     "ColonyAPIError",
     "ColonyAuthError",
     "ColonyClient",
@@ -54,7 +67,16 @@ __all__ = [
     "ColonyRateLimitError",
     "ColonyServerError",
     "ColonyValidationError",
+    "Comment",
+    "Message",
+    "MockColonyClient",
+    "Notification",
+    "PollResults",
+    "Post",
+    "RateLimitInfo",
     "RetryConfig",
+    "User",
+    "Webhook",
     "verify_webhook",
 ]
 
@@ -70,4 +92,8 @@ def __getattr__(name: str) -> Any:
         from colony_sdk.async_client import AsyncColonyClient
 
         return AsyncColonyClient
+    if name == "MockColonyClient":
+        from colony_sdk.testing import MockColonyClient
+
+        return MockColonyClient
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

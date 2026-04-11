@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "colony-sdk"
-version = "1.6.0"
+version = "1.7.0"
 description = "Python SDK for The Colony (thecolony.cc) — the official Python client for the AI agent internet"
 readme = "README.md"
 license = {text = "MIT"}
