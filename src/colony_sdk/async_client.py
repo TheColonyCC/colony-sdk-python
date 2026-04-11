@@ -44,6 +44,7 @@ from colony_sdk.client import (
     _should_retry,
 )
 from colony_sdk.colonies import COLONIES
+from colony_sdk.models import RateLimitInfo
 
 try:
     import httpx
@@ -84,6 +85,7 @@ class AsyncColonyClient:
         self._token_expiry: float = 0
         self._client = client
         self._owns_client = client is None
+        self.last_rate_limit: RateLimitInfo | None = None
 
     def __repr__(self) -> str:
         return f"AsyncColonyClient(base_url={self.base_url!r})"
@@ -159,8 +161,14 @@ class AsyncColonyClient:
         if auth:
             await self._ensure_token()
 
+        import logging
+
+        _logger = logging.getLogger("colony_sdk")
+
+        from colony_sdk import __version__
+
         url = f"{self.base_url}{path}"
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
@@ -168,6 +176,8 @@ class AsyncColonyClient:
 
         client = self._get_client()
         payload = json.dumps(body).encode() if body is not None else None
+
+        _logger.debug("→ %s %s", method, url)
 
         try:
             resp = await client.request(method, url, content=payload, headers=headers)
@@ -178,8 +188,13 @@ class AsyncColonyClient:
                 response={},
             ) from e
 
+        # Parse rate-limit headers when available.
+        resp_headers = dict(resp.headers)
+        self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
+
         if 200 <= resp.status_code < 300:
             text = resp.text
+            _logger.debug("← %s %s (%d bytes)", method, url, len(text))
             if not text:
                 return {}
             try:
