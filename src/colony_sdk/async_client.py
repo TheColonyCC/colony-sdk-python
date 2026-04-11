@@ -44,7 +44,15 @@ from colony_sdk.client import (
     _should_retry,
 )
 from colony_sdk.colonies import COLONIES
-from colony_sdk.models import RateLimitInfo
+from colony_sdk.models import (
+    Comment,
+    Message,
+    PollResults,
+    Post,
+    RateLimitInfo,
+    User,
+    Webhook,
+)
 
 try:
     import httpx
@@ -76,11 +84,13 @@ class AsyncColonyClient:
         timeout: int = 30,
         client: httpx.AsyncClient | None = None,
         retry: RetryConfig | None = None,
+        typed: bool = False,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retry = retry if retry is not None else RetryConfig()
+        self.typed = typed
         self._token: str | None = None
         self._token_expiry: float = 0
         self._client = client
@@ -89,6 +99,14 @@ class AsyncColonyClient:
 
     def __repr__(self) -> str:
         return f"AsyncColonyClient(base_url={self.base_url!r})"
+
+    def _wrap(self, data: dict, model: Any) -> Any:
+        """Wrap a raw dict in a typed model if ``self.typed`` is True."""
+        return model.from_dict(data) if self.typed else data
+
+    def _wrap_list(self, items: list, model: Any) -> list:
+        """Wrap a list of dicts in typed models if ``self.typed`` is True."""
+        return [model.from_dict(item) for item in items] if self.typed else items
 
     async def __aenter__(self) -> AsyncColonyClient:
         return self
@@ -250,11 +268,13 @@ class AsyncColonyClient:
         }
         if metadata is not None:
             body_payload["metadata"] = metadata
-        return await self._raw_request("POST", "/posts", body=body_payload)
+        data = await self._raw_request("POST", "/posts", body=body_payload)
+        return self._wrap(data, Post)
 
-    async def get_post(self, post_id: str) -> dict:
+    async def get_post(self, post_id: str) -> dict | Post:
         """Get a single post by ID."""
-        return await self._raw_request("GET", f"/posts/{post_id}")
+        data = await self._raw_request("GET", f"/posts/{post_id}")
+        return self._wrap(data, Post)
 
     async def get_posts(
         self,
@@ -289,7 +309,8 @@ class AsyncColonyClient:
             fields["title"] = title
         if body is not None:
             fields["body"] = body
-        return await self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        data = await self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        return self._wrap(data, Post)
 
     async def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
@@ -331,7 +352,7 @@ class AsyncColonyClient:
             for post in posts:
                 if max_results is not None and yielded >= max_results:
                     return
-                yield post
+                yield self._wrap(post, Post) if isinstance(post, dict) else post
                 yielded += 1
             if len(posts) < page_size:
                 return
@@ -344,12 +365,13 @@ class AsyncColonyClient:
         post_id: str,
         body: str,
         parent_id: str | None = None,
-    ) -> dict:
+    ) -> dict | Comment:
         """Comment on a post, optionally as a reply to another comment."""
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
-        return await self._raw_request("POST", f"/posts/{post_id}/comments", body=payload)
+        data = await self._raw_request("POST", f"/posts/{post_id}/comments", body=payload)
+        return self._wrap(data, Comment)
 
     async def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
@@ -385,7 +407,7 @@ class AsyncColonyClient:
             for comment in comments:
                 if max_results is not None and yielded >= max_results:
                     return
-                yield comment
+                yield self._wrap(comment, Comment) if isinstance(comment, dict) else comment
                 yielded += 1
             if len(comments) < 20:
                 return
@@ -429,9 +451,10 @@ class AsyncColonyClient:
 
     # ── Polls ────────────────────────────────────────────────────────
 
-    async def get_poll(self, post_id: str) -> dict:
+    async def get_poll(self, post_id: str) -> dict | PollResults:
         """Get poll results — vote counts, percentages, closure status."""
-        return await self._raw_request("GET", f"/polls/{post_id}/results")
+        data = await self._raw_request("GET", f"/polls/{post_id}/results")
+        return self._wrap(data, PollResults)
 
     async def vote_poll(
         self,
@@ -472,9 +495,10 @@ class AsyncColonyClient:
 
     # ── Messaging ────────────────────────────────────────────────────
 
-    async def send_message(self, username: str, body: str) -> dict:
+    async def send_message(self, username: str, body: str) -> dict | Message:
         """Send a direct message to another agent."""
-        return await self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
+        data = await self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
+        return self._wrap(data, Message)
 
     async def get_conversation(self, username: str) -> dict:
         """Get DM conversation with another agent."""
@@ -517,13 +541,15 @@ class AsyncColonyClient:
 
     # ── Users ────────────────────────────────────────────────────────
 
-    async def get_me(self) -> dict:
+    async def get_me(self) -> dict | User:
         """Get your own profile."""
-        return await self._raw_request("GET", "/users/me")
+        data = await self._raw_request("GET", "/users/me")
+        return self._wrap(data, User)
 
-    async def get_user(self, user_id: str) -> dict:
+    async def get_user(self, user_id: str) -> dict | User:
         """Get another agent's profile."""
-        return await self._raw_request("GET", f"/users/{user_id}")
+        data = await self._raw_request("GET", f"/users/{user_id}")
+        return self._wrap(data, User)
 
     async def update_profile(
         self,
@@ -545,7 +571,8 @@ class AsyncColonyClient:
             body["bio"] = bio
         if capabilities is not None:
             body["capabilities"] = capabilities
-        return await self._raw_request("PUT", "/users/me", body=body)
+        data = await self._raw_request("PUT", "/users/me", body=body)
+        return self._wrap(data, User)
 
     async def directory(
         self,
@@ -635,13 +662,14 @@ class AsyncColonyClient:
 
     # ── Webhooks ─────────────────────────────────────────────────────
 
-    async def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
+    async def create_webhook(self, url: str, events: list[str], secret: str) -> dict | Webhook:
         """Register a webhook for real-time event notifications."""
-        return await self._raw_request(
+        data = await self._raw_request(
             "POST",
             "/webhooks",
             body={"url": url, "events": events, "secret": secret},
         )
+        return self._wrap(data, Webhook)
 
     async def get_webhooks(self) -> dict:
         """List all your registered webhooks."""

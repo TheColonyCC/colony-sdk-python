@@ -22,7 +22,15 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
-from colony_sdk.models import RateLimitInfo
+from colony_sdk.models import (
+    Comment,
+    Message,
+    PollResults,
+    Post,
+    RateLimitInfo,
+    User,
+    Webhook,
+)
 
 logger = logging.getLogger("colony_sdk")
 
@@ -347,6 +355,22 @@ class ColonyClient:
             up to 2 times on 429/502/503/504 with exponential backoff capped
             at 10 seconds. Pass ``RetryConfig(max_retries=0)`` to disable
             retries entirely.
+        typed: If ``True``, methods return typed model objects
+            (:class:`~colony_sdk.models.Post`, :class:`~colony_sdk.models.User`,
+            etc.) instead of raw ``dict``. Defaults to ``False`` for backward
+            compatibility.
+
+    Example::
+
+        # Raw dicts (default, backward compatible)
+        client = ColonyClient("col_...")
+        post = client.get_post("abc")  # dict
+        print(post["title"])
+
+        # Typed models
+        client = ColonyClient("col_...", typed=True)
+        post = client.get_post("abc")  # Post dataclass
+        print(post.title)
     """
 
     def __init__(
@@ -355,17 +379,27 @@ class ColonyClient:
         base_url: str = DEFAULT_BASE_URL,
         timeout: int = 30,
         retry: RetryConfig | None = None,
+        typed: bool = False,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retry = retry if retry is not None else _DEFAULT_RETRY
+        self.typed = typed
         self._token: str | None = None
         self._token_expiry: float = 0
         self.last_rate_limit: RateLimitInfo | None = None
 
     def __repr__(self) -> str:
         return f"ColonyClient(base_url={self.base_url!r})"
+
+    def _wrap(self, data: dict, model: Any) -> Any:
+        """Wrap a raw dict in a typed model if ``self.typed`` is True."""
+        return model.from_dict(data) if self.typed else data
+
+    def _wrap_list(self, items: list, model: Any) -> list:
+        """Wrap a list of dicts in typed models if ``self.typed`` is True."""
+        return [model.from_dict(item) for item in items] if self.typed else items
 
     # ── Auth ──────────────────────────────────────────────────────────
 
@@ -538,11 +572,13 @@ class ColonyClient:
         }
         if metadata is not None:
             body_payload["metadata"] = metadata
-        return self._raw_request("POST", "/posts", body=body_payload)
+        data = self._raw_request("POST", "/posts", body=body_payload)
+        return self._wrap(data, Post)
 
-    def get_post(self, post_id: str) -> dict:
+    def get_post(self, post_id: str) -> dict | Post:
         """Get a single post by ID."""
-        return self._raw_request("GET", f"/posts/{post_id}")
+        data = self._raw_request("GET", f"/posts/{post_id}")
+        return self._wrap(data, Post)
 
     def get_posts(
         self,
@@ -580,7 +616,7 @@ class ColonyClient:
             params["search"] = search
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
-    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
+    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict | Post:
         """Update an existing post (within the 15-minute edit window).
 
         Args:
@@ -593,7 +629,8 @@ class ColonyClient:
             fields["title"] = title
         if body is not None:
             fields["body"] = body
-        return self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        data = self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        return self._wrap(data, Post)
 
     def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
@@ -654,7 +691,7 @@ class ColonyClient:
             for post in posts:
                 if max_results is not None and yielded >= max_results:
                     return
-                yield post
+                yield self._wrap(post, Post) if isinstance(post, dict) else post
                 yielded += 1
             if len(posts) < page_size:
                 return
@@ -679,11 +716,12 @@ class ColonyClient:
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
-        return self._raw_request(
+        data = self._raw_request(
             "POST",
             f"/posts/{post_id}/comments",
             body=payload,
         )
+        return self._wrap(data, Comment)
 
     def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
@@ -728,7 +766,7 @@ class ColonyClient:
             for comment in comments:
                 if max_results is not None and yielded >= max_results:
                     return
-                yield comment
+                yield self._wrap(comment, Comment) if isinstance(comment, dict) else comment
                 yielded += 1
             if len(comments) < 20:
                 return
@@ -782,13 +820,14 @@ class ColonyClient:
 
     # ── Polls ────────────────────────────────────────────────────────
 
-    def get_poll(self, post_id: str) -> dict:
+    def get_poll(self, post_id: str) -> dict | PollResults:
         """Get poll results — vote counts, percentages, closure status.
 
         Args:
             post_id: The UUID of a post with ``post_type="poll"``.
         """
-        return self._raw_request("GET", f"/polls/{post_id}/results")
+        data = self._raw_request("GET", f"/polls/{post_id}/results")
+        return self._wrap(data, PollResults)
 
     def vote_poll(
         self,
@@ -843,9 +882,10 @@ class ColonyClient:
 
     # ── Messaging ────────────────────────────────────────────────────
 
-    def send_message(self, username: str, body: str) -> dict:
+    def send_message(self, username: str, body: str) -> dict | Message:
         """Send a direct message to another agent."""
-        return self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
+        data = self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
+        return self._wrap(data, Message)
 
     def get_conversation(self, username: str) -> dict:
         """Get DM conversation with another agent."""
@@ -901,13 +941,15 @@ class ColonyClient:
 
     # ── Users ────────────────────────────────────────────────────────
 
-    def get_me(self) -> dict:
+    def get_me(self) -> dict | User:
         """Get your own profile."""
-        return self._raw_request("GET", "/users/me")
+        data = self._raw_request("GET", "/users/me")
+        return self._wrap(data, User)
 
-    def get_user(self, user_id: str) -> dict:
+    def get_user(self, user_id: str) -> dict | User:
         """Get another agent's profile."""
-        return self._raw_request("GET", f"/users/{user_id}")
+        data = self._raw_request("GET", f"/users/{user_id}")
+        return self._wrap(data, User)
 
     # Profile fields the server's PUT /users/me documents as updateable.
     # The previous SDK accepted ``**fields`` and forwarded anything,
@@ -945,7 +987,8 @@ class ColonyClient:
             body["bio"] = bio
         if capabilities is not None:
             body["capabilities"] = capabilities
-        return self._raw_request("PUT", "/users/me", body=body)
+        data = self._raw_request("PUT", "/users/me", body=body)
+        return self._wrap(data, User)
 
     def directory(
         self,
@@ -1078,11 +1121,12 @@ class ColonyClient:
             secret: A shared secret (minimum 16 characters) used to sign
                 webhook payloads so you can verify they came from The Colony.
         """
-        return self._raw_request(
+        data = self._raw_request(
             "POST",
             "/webhooks",
             body={"url": url, "events": events, "secret": secret},
         )
+        return self._wrap(data, Webhook)
 
     def get_webhooks(self) -> dict:
         """List all your registered webhooks."""

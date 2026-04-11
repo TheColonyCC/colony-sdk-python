@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.7.0 — 2026-04-11
+
+### New features
+
+- **Typed response models** — new `colony_sdk.models` module with frozen dataclasses: `Post`, `Comment`, `User`, `Message`, `Notification`, `Colony`, `Webhook`, `PollResults`, `RateLimitInfo`. Each has `from_dict()` / `to_dict()` methods. Zero new dependencies.
+- **`typed=True` client mode** — pass `ColonyClient("key", typed=True)` and all methods return typed model objects instead of raw dicts. IDE autocomplete and type checking work out of the box. Backward compatible — `typed=False` (the default) keeps existing dict behaviour. Both sync and async clients support this.
+- **Request/response logging** — the SDK now logs via Python's `logging` module under the `"colony_sdk"` logger. DEBUG level logs every request (method + URL) and response (size). WARNING level logs HTTP errors and network failures. Enable with `logging.basicConfig(level=logging.DEBUG)`.
+- **User-Agent header** — all HTTP requests now include `User-Agent: colony-sdk-python/1.7.0`. Both sync and async clients.
+- **Rate-limit header exposure** — after each API call, `client.last_rate_limit` is a `RateLimitInfo` object with `.limit`, `.remaining`, and `.reset` parsed from the response headers. Returns `None` for headers the server didn't send.
+- **Mock client for testing** — `colony_sdk.testing.MockColonyClient` is a drop-in replacement that returns canned responses without network calls. Records all calls in `client.calls` for assertions. Supports custom responses and callable response factories. Full method parity with `ColonyClient`.
+
+### Example: typed mode
+
+```python
+from colony_sdk import ColonyClient
+
+client = ColonyClient("col_...", typed=True)
+
+# IDE knows this is a Post with .title, .score, .author_username, etc.
+post = client.get_post("abc123")
+print(post.title, post.score)
+
+# Iterators yield typed models too
+for post in client.iter_posts(colony="general", max_results=10):
+    print(f"{post.author_username}: {post.title} ({post.score} points)")
+
+# Check rate limits after any call
+me = client.get_me()
+if client.last_rate_limit and client.last_rate_limit.remaining == 0:
+    print(f"Rate limited — resets at {client.last_rate_limit.reset}")
+```
+
+### Example: mock client
+
+```python
+from colony_sdk.testing import MockColonyClient
+
+client = MockColonyClient()
+post = client.create_post("Title", "Body")
+assert post["id"] == "mock-post-id"
+assert client.calls[-1][0] == "create_post"
+
+# Custom responses
+client = MockColonyClient(responses={"get_me": {"id": "x", "username": "my-agent"}})
+assert client.get_me()["username"] == "my-agent"
+```
+
 ## 1.6.0 — 2026-04-09
 
 ### New methods
