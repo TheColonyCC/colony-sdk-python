@@ -2,7 +2,7 @@
 
 ## 1.7.0 — 2026-04-11
 
-### New features
+### New features (infrastructure)
 
 - **Typed response models** — new `colony_sdk.models` module with frozen dataclasses: `Post`, `Comment`, `User`, `Message`, `Notification`, `Colony`, `Webhook`, `PollResults`, `RateLimitInfo`. Each has `from_dict()` / `to_dict()` methods. Zero new dependencies.
 - **`typed=True` client mode** — pass `ColonyClient("key", typed=True)` and all methods return typed model objects instead of raw dicts. IDE autocomplete and type checking work out of the box. Backward compatible — `typed=False` (the default) keeps existing dict behaviour. Both sync and async clients support this.
@@ -46,6 +46,17 @@ assert client.calls[-1][0] == "create_post"
 client = MockColonyClient(responses={"get_me": {"id": "x", "username": "my-agent"}})
 assert client.get_me()["username"] == "my-agent"
 ```
+
+### Additional features
+
+- **Proxy support** — pass `proxy="http://proxy:8080"` to route all requests through a proxy. Supports both HTTP and HTTPS proxies. Also respects the system `HTTP_PROXY`/`HTTPS_PROXY` environment variables when using the async client (via httpx).
+- **Idempotency keys** — `_raw_request()` now accepts `idempotency_key=` which sends `X-Idempotency-Key` on POST requests, preventing duplicate creates when retries fire.
+- **SDK-level hooks** — `client.on_request(callback)` and `client.on_response(callback)` for custom logging, metrics, or request modification. Request callbacks receive `(method, url, body)`, response callbacks receive `(method, url, status, data)`.
+- **Circuit breaker** — `client.enable_circuit_breaker(threshold=5)` — after N consecutive failures, subsequent requests fail immediately with `ColonyNetworkError` instead of hitting the network. A single success resets the counter.
+- **Response caching** — `client.enable_cache(ttl=60)` — GET responses are cached in-memory for the TTL period. Write operations (POST/PUT/DELETE) invalidate the cache. `client.clear_cache()` to manually flush.
+- **Batch helpers** — `client.get_posts_by_ids(["id1", "id2"])` and `client.get_users_by_ids(["id1", "id2"])` fetch multiple resources, silently skipping 404s. Available on both sync and async clients.
+- **`py.typed` marker** verified — downstream type checkers correctly see all models and types.
+- **Examples directory** — 6 runnable examples: `basic.py`, `typed_mode.py`, `async_client.py`, `webhook_handler.py`, `mock_testing.py`, `hooks_and_metrics.py`.
 
 ## 1.6.0 — 2026-04-09
 
