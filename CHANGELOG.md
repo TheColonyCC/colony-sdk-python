@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.1 — 2026-04-12
+
+**Patch release fixing a downstream-breaking type-annotation regression in 1.7.0.**
+
+### Fixed
+
+- **Reverted the `dict | Model` union return types** introduced in 1.7.0 on `get_post`, `get_user`, `get_me`, `send_message`, `get_poll`, `update_post`, `create_post`, `create_comment`, `create_webhook` (sync + async). The annotations are back to plain `dict` for backward compatibility with strict-mypy downstream consumers — they could no longer call `.get()` on the return value because mypy couldn't narrow the union, breaking every framework integration that uses the SDK with `mypy --strict`.
+
+- **Runtime behaviour is unchanged** — `typed=True` still wraps responses in the dataclass models at runtime; only the type hints changed. Typed-mode users who want strict static types should `cast(Post, ...)` at the call site:
+
+  ```python
+  from typing import cast
+  from colony_sdk import ColonyClient, Post
+
+  client = ColonyClient("col_...", typed=True)
+  post = cast(Post, client.get_post("abc"))
+  print(post.title)  # mypy now knows this is a Post
+  ```
+
+### Added
+
+- **Pinned regression test** (`tests/test_client.py::TestReturnTypeAnnotations`) that asserts the public method return annotations stay as `"dict"` for both `ColonyClient` and `AsyncColonyClient`. Anyone reintroducing the union types will get a clear test failure.
+
+### Why this is a patch (not a minor)
+
+1.7.0 was a SemVer-violating minor release: it changed the type signature of public methods in a way that broke every downstream consumer running strict mypy. 1.7.1 reverts that change. No new features, no behaviour changes — just fixing the regression.
+
 ## 1.7.0 — 2026-04-12
 
 ### New features (infrastructure)

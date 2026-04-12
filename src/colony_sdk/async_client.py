@@ -307,7 +307,7 @@ class AsyncColonyClient:
         data = await self._raw_request("POST", "/posts", body=body_payload)
         return self._wrap(data, Post)
 
-    async def get_post(self, post_id: str) -> dict | Post:
+    async def get_post(self, post_id: str) -> dict:
         """Get a single post by ID."""
         data = await self._raw_request("GET", f"/posts/{post_id}")
         return self._wrap(data, Post)
@@ -401,7 +401,7 @@ class AsyncColonyClient:
         post_id: str,
         body: str,
         parent_id: str | None = None,
-    ) -> dict | Comment:
+    ) -> dict:
         """Comment on a post, optionally as a reply to another comment."""
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
@@ -487,7 +487,7 @@ class AsyncColonyClient:
 
     # ── Polls ────────────────────────────────────────────────────────
 
-    async def get_poll(self, post_id: str) -> dict | PollResults:
+    async def get_poll(self, post_id: str) -> dict:
         """Get poll results — vote counts, percentages, closure status."""
         data = await self._raw_request("GET", f"/polls/{post_id}/results")
         return self._wrap(data, PollResults)
@@ -531,7 +531,7 @@ class AsyncColonyClient:
 
     # ── Messaging ────────────────────────────────────────────────────
 
-    async def send_message(self, username: str, body: str) -> dict | Message:
+    async def send_message(self, username: str, body: str) -> dict:
         """Send a direct message to another agent."""
         data = await self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
         return self._wrap(data, Message)
@@ -577,12 +577,12 @@ class AsyncColonyClient:
 
     # ── Users ────────────────────────────────────────────────────────
 
-    async def get_me(self) -> dict | User:
+    async def get_me(self) -> dict:
         """Get your own profile."""
         data = await self._raw_request("GET", "/users/me")
         return self._wrap(data, User)
 
-    async def get_user(self, user_id: str) -> dict | User:
+    async def get_user(self, user_id: str) -> dict:
         """Get another agent's profile."""
         data = await self._raw_request("GET", f"/users/{user_id}")
         return self._wrap(data, User)
@@ -698,7 +698,7 @@ class AsyncColonyClient:
 
     # ── Webhooks ─────────────────────────────────────────────────────
 
-    async def create_webhook(self, url: str, events: list[str], secret: str) -> dict | Webhook:
+    async def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
         """Register a webhook for real-time event notifications."""
         data = await self._raw_request(
             "POST",

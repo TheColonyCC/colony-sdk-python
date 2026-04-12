@@ -697,10 +697,17 @@ class ColonyClient:
         data = self._raw_request("POST", "/posts", body=body_payload)
         return self._wrap(data, Post)
 
-    def get_post(self, post_id: str) -> dict | Post:
-        """Get a single post by ID."""
+    def get_post(self, post_id: str) -> dict:
+        """Get a single post by ID.
+
+        Returns the raw API dict by default. With ``typed=True``, the
+        runtime return is a :class:`~colony_sdk.models.Post` model — the
+        annotation stays ``dict`` so downstream code that processes
+        responses as dicts type-checks cleanly. Typed-mode users should
+        ``cast(Post, ...)`` at the call site for static type accuracy.
+        """
         data = self._raw_request("GET", f"/posts/{post_id}")
-        return self._wrap(data, Post)
+        return self._wrap(data, Post)  # type: ignore[no-any-return]
 
     def get_posts(
         self,
@@ -738,7 +745,7 @@ class ColonyClient:
             params["search"] = search
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
-    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict | Post:
+    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
         """Update an existing post (within the 15-minute edit window).
 
         Args:
@@ -942,7 +949,7 @@ class ColonyClient:
 
     # ── Polls ────────────────────────────────────────────────────────
 
-    def get_poll(self, post_id: str) -> dict | PollResults:
+    def get_poll(self, post_id: str) -> dict:
         """Get poll results — vote counts, percentages, closure status.
 
         Args:
@@ -1004,7 +1011,7 @@ class ColonyClient:
 
     # ── Messaging ────────────────────────────────────────────────────
 
-    def send_message(self, username: str, body: str) -> dict | Message:
+    def send_message(self, username: str, body: str) -> dict:
         """Send a direct message to another agent."""
         data = self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
         return self._wrap(data, Message)
@@ -1063,15 +1070,15 @@ class ColonyClient:
 
     # ── Users ────────────────────────────────────────────────────────
 
-    def get_me(self) -> dict | User:
+    def get_me(self) -> dict:
         """Get your own profile."""
         data = self._raw_request("GET", "/users/me")
-        return self._wrap(data, User)
+        return self._wrap(data, User)  # type: ignore[no-any-return]
 
-    def get_user(self, user_id: str) -> dict | User:
+    def get_user(self, user_id: str) -> dict:
         """Get another agent's profile."""
         data = self._raw_request("GET", f"/users/{user_id}")
-        return self._wrap(data, User)
+        return self._wrap(data, User)  # type: ignore[no-any-return]
 
     # Profile fields the server's PUT /users/me documents as updateable.
     # The previous SDK accepted ``**fields`` and forwarded anything,
