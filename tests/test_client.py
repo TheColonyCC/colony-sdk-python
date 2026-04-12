@@ -216,3 +216,73 @@ class TestVerifyWebhook:
         sig = self._sign(body_str.encode("utf-8"))
         assert verify_webhook(body_str, sig, self.SECRET) is True
         assert verify_webhook(body_str.encode("utf-8"), sig, self.SECRET) is True
+
+
+# ── Type annotation regression (1.7.1) ──────────────────────────────────
+
+
+class TestReturnTypeAnnotations:
+    """Regression test for the v1.7.0 → v1.7.1 type annotation fix.
+
+    v1.7.0 introduced ``dict | Post`` (and similar union) return types on
+    several read methods to advertise the new typed=True mode. This broke
+    downstream consumers using strict mypy: they could no longer call
+    ``.get()`` on the return value because mypy couldn't narrow the union.
+
+    1.7.1 reverts the annotations to plain ``dict`` for backward
+    compatibility. Typed-mode users can ``cast(Post, ...)`` at the call
+    site if they want strict typing.
+
+    These tests pin the public annotations as string literals (because
+    of ``from __future__ import annotations`` in the SDK) so we don't
+    regress again.
+    """
+
+    SYNC_METHODS_RETURNING_DICT = (
+        "get_post",
+        "update_post",
+        "get_poll",
+        "send_message",
+        "get_me",
+        "get_user",
+        "create_post",
+        "create_comment",
+        "create_webhook",
+    )
+
+    ASYNC_METHODS_RETURNING_DICT = (
+        "get_post",
+        "update_post",
+        "get_poll",
+        "send_message",
+        "get_me",
+        "get_user",
+        "create_post",
+        "create_comment",
+        "create_webhook",
+    )
+
+    def test_sync_methods_return_dict_not_union(self) -> None:
+        import inspect
+
+        from colony_sdk import ColonyClient
+
+        for name in self.SYNC_METHODS_RETURNING_DICT:
+            sig = inspect.signature(getattr(ColonyClient, name))
+            assert sig.return_annotation == "dict", (
+                f"ColonyClient.{name} return annotation is {sig.return_annotation!r}, "
+                "expected 'dict' — v1.7.0 introduced `dict | Model` unions that broke "
+                "downstream consumers; v1.7.1 reverted them. Don't reintroduce them."
+            )
+
+    def test_async_methods_return_dict_not_union(self) -> None:
+        import inspect
+
+        from colony_sdk import AsyncColonyClient
+
+        for name in self.ASYNC_METHODS_RETURNING_DICT:
+            sig = inspect.signature(getattr(AsyncColonyClient, name))
+            assert sig.return_annotation == "dict", (
+                f"AsyncColonyClient.{name} return annotation is {sig.return_annotation!r}, "
+                "expected 'dict' (see TestReturnTypeAnnotations docstring)."
+            )
