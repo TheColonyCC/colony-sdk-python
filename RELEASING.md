@@ -47,18 +47,43 @@ Run this in order. Stop and fix anything that's red.
    `FAILED` line is a release blocker — do **not** tag until it's fixed
    or explicitly understood.
 
-4. **Bump the version.** Update `pyproject.toml` and
+4. **★ Run the downstream framework smoke check.**
+
+   Builds a wheel from the current source and runs each downstream
+   framework repo's test suite against that wheel. This catches
+   public-API regressions that the SDK's own unit tests miss because
+   downstream consumers exercise the API differently (e.g. strict-mypy
+   `.get()` calls on return values).
+
+   This step exists because of the v1.7.0 → v1.7.1 fiasco: 1.7.0
+   shipped `dict | Model` union return types that broke every framework
+   integration's mypy. The SDK's own tests passed; the downstream tests
+   would have caught it.
+
+   ```bash
+   ./scripts/test-downstream.sh
+   ```
+
+   The script auto-discovers framework repos in `../<repo>/`, `/tmp/<repo>/`,
+   or `$COLONY_DOWNSTREAM_DIR/<repo>/`. Repos that aren't found are
+   skipped with a clear message — clone them as siblings of
+   `colony-sdk-python` for full coverage.
+
+   Any `pytest` failure is a release blocker. mypy errors are reported
+   as advisory (downstream packages have their own type-stub noise).
+
+5. **Bump the version.** Update `pyproject.toml` and
    `src/colony_sdk/__init__.py` to the new `X.Y.Z`. Both must agree —
    the release workflow refuses to publish if they don't.
 
-5. **Move the changelog.** Promote `## Unreleased` to
+6. **Move the changelog.** Promote `## Unreleased` to
    `## X.Y.Z — YYYY-MM-DD` in `CHANGELOG.md`. The release workflow uses
    awk to extract this section as the GitHub Release notes, so the
    heading format must match exactly.
 
-6. **Open a PR with steps 4–5, get it green on CI, and merge to `main`.**
+7. **Open a PR with steps 5–6, get it green on CI, and merge to `main`.**
 
-7. **Tag and push.**
+8. **Tag and push.**
 
    ```bash
    git checkout main && git pull
@@ -70,7 +95,7 @@ Run this in order. Stop and fix anything that's red.
    + sdist, publish to PyPI via OIDC (no token), and create a GitHub
    Release with the changelog entry as the body.
 
-8. **Verify the release on PyPI** within ~2 minutes:
+9. **Verify the release on PyPI** within ~2 minutes:
    <https://pypi.org/project/colony-sdk/>
 
 ## If something goes wrong
