@@ -52,6 +52,30 @@ class TestProxy:
         client = ColonyClient("col_test")
         assert client.proxy is None
 
+    def test_proxy_handler_used(self) -> None:
+        """Verify that when a proxy is set, build_opener is called and used."""
+        client = _make_client(proxy="http://proxy.test:8080")
+
+        captured_handlers: list = []
+
+        class FakeOpener:
+            def open(self, req: object, timeout: object = None) -> object:
+                return _mock_response({"id": "u1", "username": "alice"})
+
+        def fake_build_opener(handler: object) -> object:
+            captured_handlers.append(handler)
+            return FakeOpener()
+
+        with patch("urllib.request.build_opener", side_effect=fake_build_opener):
+            result = client.get_me()
+
+        # build_opener was called once with a ProxyHandler
+        assert len(captured_handlers) == 1
+        import urllib.request
+
+        assert isinstance(captured_handlers[0], urllib.request.ProxyHandler)
+        assert result["username"] == "alice"
+
 
 # ── Hooks ────────────────────────────────────────────────────────────
 
@@ -345,6 +369,48 @@ class TestAsyncHooks:
         assert len(client._on_request) == 1
         assert len(client._on_response) == 1
 
+    @pytest.mark.asyncio
+    async def test_on_request_called(self) -> None:
+        import httpx
+
+        from colony_sdk import AsyncColonyClient
+
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"id": "u1", "username": "alice"})
+
+        transport = httpx.MockTransport(mock_handler)
+        calls: list = []
+        async with AsyncColonyClient("col_test", client=httpx.AsyncClient(transport=transport)) as client:
+            client._token = "fake"
+            client._token_expiry = 9999999999
+            client.on_request(lambda m, u, b: calls.append((m, u)))
+            await client.get_me()
+
+        assert len(calls) == 1
+        assert calls[0][0] == "GET"
+        assert "/users/me" in calls[0][1]
+
+    @pytest.mark.asyncio
+    async def test_on_response_called(self) -> None:
+        import httpx
+
+        from colony_sdk import AsyncColonyClient
+
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"id": "u1", "username": "alice"})
+
+        transport = httpx.MockTransport(mock_handler)
+        calls: list = []
+        async with AsyncColonyClient("col_test", client=httpx.AsyncClient(transport=transport)) as client:
+            client._token = "fake"
+            client._token_expiry = 9999999999
+            client.on_response(lambda m, u, s, d: calls.append((m, s, d)))
+            await client.get_me()
+
+        assert len(calls) == 1
+        assert calls[0][1] == 200
+        assert calls[0][2]["username"] == "alice"
+
 
 class TestAsyncBatchHelpers:
     @pytest.mark.asyncio
@@ -365,6 +431,30 @@ class TestAsyncBatchHelpers:
             results = await client.get_posts_by_ids(["p1", "p2"])
 
         assert len(results) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_posts_by_ids_skips_404(self) -> None:
+        import httpx
+
+        from colony_sdk import AsyncColonyClient, RetryConfig
+
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            if "p2" in str(request.url):
+                return httpx.Response(404, json={"detail": "Not found"})
+            return httpx.Response(200, json={"id": "p1", "title": "Post 1"})
+
+        transport = httpx.MockTransport(mock_handler)
+        async with AsyncColonyClient(
+            "col_test",
+            client=httpx.AsyncClient(transport=transport),
+            retry=RetryConfig(max_retries=0),
+        ) as client:
+            client._token = "fake"
+            client._token_expiry = 9999999999
+            results = await client.get_posts_by_ids(["p1", "p2"])
+
+        assert len(results) == 1
+        assert results[0]["id"] == "p1"
 
     @pytest.mark.asyncio
     async def test_get_users_by_ids_skips_404(self) -> None:
