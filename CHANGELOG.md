@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.7.0 — 2026-04-11
+## 1.7.0 — 2026-04-12
 
 ### New features (infrastructure)
 
