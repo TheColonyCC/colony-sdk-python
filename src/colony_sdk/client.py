@@ -380,15 +380,23 @@ class ColonyClient:
         timeout: int = 30,
         retry: RetryConfig | None = None,
         typed: bool = False,
+        proxy: str | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retry = retry if retry is not None else _DEFAULT_RETRY
         self.typed = typed
+        self.proxy = proxy
         self._token: str | None = None
         self._token_expiry: float = 0
         self.last_rate_limit: RateLimitInfo | None = None
+        self._on_request: list[Any] = []
+        self._on_response: list[Any] = []
+        self._consecutive_failures: int = 0
+        self._circuit_breaker_threshold: int = 0  # 0 = disabled
+        self._cache: dict[str, tuple[float, dict]] = {}
+        self._cache_ttl: float = 0  # 0 = disabled
 
     def __repr__(self) -> str:
         return f"ColonyClient(base_url={self.base_url!r})"
@@ -400,6 +408,71 @@ class ColonyClient:
     def _wrap_list(self, items: list, model: Any) -> list:
         """Wrap a list of dicts in typed models if ``self.typed`` is True."""
         return [model.from_dict(item) for item in items] if self.typed else items
+
+    # ── Hooks ────────────────────────────────────────────────────────
+
+    def on_request(self, callback: Any) -> None:
+        """Register a callback invoked before every request.
+
+        The callback receives ``(method: str, url: str, body: dict | None)``.
+
+        Example::
+
+            def log_request(method, url, body):
+                print(f"→ {method} {url}")
+
+            client.on_request(log_request)
+        """
+        self._on_request.append(callback)
+
+    def on_response(self, callback: Any) -> None:
+        """Register a callback invoked after every successful response.
+
+        The callback receives ``(method: str, url: str, status: int, data: dict)``.
+
+        Example::
+
+            def log_response(method, url, status, data):
+                print(f"← {method} {url} ({status})")
+
+            client.on_response(log_response)
+        """
+        self._on_response.append(callback)
+
+    # ── Circuit breaker ──────────────────────────────────────────────
+
+    def enable_circuit_breaker(self, threshold: int = 5) -> None:
+        """Enable circuit breaker — fail fast after ``threshold`` consecutive failures.
+
+        After ``threshold`` consecutive failures (non-2xx responses or network
+        errors), subsequent requests raise :class:`ColonyNetworkError` immediately
+        without hitting the network. A single successful request resets the counter.
+
+        Args:
+            threshold: Number of consecutive failures before opening the circuit.
+                Pass ``0`` to disable.
+        """
+        self._circuit_breaker_threshold = threshold
+        self._consecutive_failures = 0
+
+    # ── Cache ────────────────────────────────────────────────────────
+
+    def enable_cache(self, ttl: float = 60.0) -> None:
+        """Enable in-memory caching for GET requests.
+
+        Cached responses are returned for identical GET URLs within the TTL
+        window. POST/PUT/DELETE requests are never cached and invalidate
+        relevant cache entries.
+
+        Args:
+            ttl: Cache time-to-live in seconds. Pass ``0`` to disable.
+        """
+        self._cache_ttl = ttl
+        self._cache.clear()
+
+    def clear_cache(self) -> None:
+        """Clear the response cache."""
+        self._cache.clear()
 
     # ── Auth ──────────────────────────────────────────────────────────
 
@@ -448,32 +521,79 @@ class ColonyClient:
         auth: bool = True,
         _retry: int = 0,
         _token_refreshed: bool = False,
+        idempotency_key: str | None = None,
     ) -> dict:
+        # Circuit breaker — fail fast if too many consecutive failures.
+        if self._circuit_breaker_threshold > 0 and self._consecutive_failures >= self._circuit_breaker_threshold:
+            raise ColonyNetworkError(
+                f"Circuit breaker open after {self._consecutive_failures} consecutive failures",
+                status=0,
+                response={},
+            )
+
         if auth:
             self._ensure_token()
 
         from colony_sdk import __version__
 
         url = f"{self.base_url}{path}"
+
+        # Cache — return cached response for GET requests within TTL.
+        if method == "GET" and self._cache_ttl > 0 and _retry == 0:
+            cached = self._cache.get(url)
+            if cached is not None:
+                cached_time, cached_data = cached
+                if time.time() - cached_time < self._cache_ttl:
+                    logger.debug("← %s %s (cached)", method, url)
+                    return cached_data
+
         headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
+        # Idempotency key for POST requests to prevent duplicate creates on retries.
+        if idempotency_key and method == "POST":
+            headers["X-Idempotency-Key"] = idempotency_key
+
+        # Invoke request hooks.
+        for hook in self._on_request:
+            hook(method, url, body)
 
         payload = json.dumps(body).encode() if body is not None else None
+
         req = Request(url, data=payload, headers=headers, method=method)
 
         logger.debug("→ %s %s", method, url)
 
         try:
-            with urlopen(req, timeout=self.timeout) as resp:
+            # Proxy support — install a ProxyHandler if configured.
+            if self.proxy:
+                import urllib.request
+
+                proxy_handler = urllib.request.ProxyHandler({"http": self.proxy, "https": self.proxy})
+                opener = urllib.request.build_opener(proxy_handler)
+                resp_ctx = opener.open(req, timeout=self.timeout)
+            else:
+                resp_ctx = urlopen(req, timeout=self.timeout)
+            with resp_ctx as resp:
                 raw = resp.read().decode()
                 # Parse rate-limit headers when available.
                 resp_headers = {k: v for k, v in resp.getheaders()}
                 self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
-                return json.loads(raw) if raw else {}
+                data = json.loads(raw) if raw else {}
+                self._consecutive_failures = 0  # Reset circuit breaker on success.
+                # Cache GET responses.
+                if method == "GET" and self._cache_ttl > 0:
+                    self._cache[url] = (time.time(), data)
+                # Invalidate cache on write operations.
+                if method in ("POST", "PUT", "DELETE") and self._cache_ttl > 0:
+                    self._cache.clear()
+                # Invoke response hooks.
+                for hook in self._on_response:
+                    hook(method, url, 200, data)
+                return data
         except HTTPError as e:
             resp_body = e.read().decode()
 
@@ -491,6 +611,7 @@ class ColonyClient:
                 time.sleep(delay)
                 return self._raw_request(method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed)
 
+            self._consecutive_failures += 1
             logger.warning("← %s %s → HTTP %d", method, url, e.code)
             raise _build_api_error(
                 e.code,
@@ -501,6 +622,7 @@ class ColonyClient:
             ) from e
         except URLError as e:
             # DNS failure, connection refused, timeout — never reached the server.
+            self._consecutive_failures += 1
             logger.warning("← %s %s → network error: %s", method, url, e.reason)
             raise ColonyNetworkError(
                 f"Colony API network error ({method} {path}): {e.reason}",
@@ -1179,6 +1301,48 @@ class ColonyClient:
             webhook_id: The UUID of the webhook to delete.
         """
         return self._raw_request("DELETE", f"/webhooks/{webhook_id}")
+
+    # ── Batch helpers ───────────────────────────────────────────────
+
+    def get_posts_by_ids(self, post_ids: list[str]) -> list:
+        """Fetch multiple posts by ID.
+
+        Convenience method that calls :meth:`get_post` for each ID and
+        collects the results. Silently skips posts that return 404.
+
+        Args:
+            post_ids: List of post UUIDs.
+
+        Returns:
+            List of post dicts (or Post models if ``typed=True``).
+        """
+        results = []
+        for pid in post_ids:
+            try:
+                results.append(self.get_post(pid))
+            except ColonyNotFoundError:
+                continue
+        return results
+
+    def get_users_by_ids(self, user_ids: list[str]) -> list:
+        """Fetch multiple user profiles by ID.
+
+        Convenience method that calls :meth:`get_user` for each ID and
+        collects the results. Silently skips users that return 404.
+
+        Args:
+            user_ids: List of user UUIDs.
+
+        Returns:
+            List of user dicts (or User models if ``typed=True``).
+        """
+        results = []
+        for uid in user_ids:
+            try:
+                results.append(self.get_user(uid))
+            except ColonyNotFoundError:
+                continue
+        return results
 
     # ── Registration ─────────────────────────────────────────────────
 

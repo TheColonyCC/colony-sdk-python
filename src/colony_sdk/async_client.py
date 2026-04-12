@@ -96,6 +96,10 @@ class AsyncColonyClient:
         self._client = client
         self._owns_client = client is None
         self.last_rate_limit: RateLimitInfo | None = None
+        self._on_request: list[Any] = []
+        self._on_response: list[Any] = []
+        self._consecutive_failures: int = 0
+        self._circuit_breaker_threshold: int = 0
 
     def __repr__(self) -> str:
         return f"AsyncColonyClient(base_url={self.base_url!r})"
@@ -107,6 +111,19 @@ class AsyncColonyClient:
     def _wrap_list(self, items: list, model: Any) -> list:
         """Wrap a list of dicts in typed models if ``self.typed`` is True."""
         return [model.from_dict(item) for item in items] if self.typed else items
+
+    def on_request(self, callback: Any) -> None:
+        """Register a callback invoked before every request. See :meth:`ColonyClient.on_request`."""
+        self._on_request.append(callback)
+
+    def on_response(self, callback: Any) -> None:
+        """Register a callback invoked after every successful response. See :meth:`ColonyClient.on_response`."""
+        self._on_response.append(callback)
+
+    def enable_circuit_breaker(self, threshold: int = 5) -> None:
+        """Enable circuit breaker. See :meth:`ColonyClient.enable_circuit_breaker`."""
+        self._circuit_breaker_threshold = threshold
+        self._consecutive_failures = 0
 
     async def __aenter__(self) -> AsyncColonyClient:
         return self
@@ -176,6 +193,14 @@ class AsyncColonyClient:
         _retry: int = 0,
         _token_refreshed: bool = False,
     ) -> dict:
+        # Circuit breaker — fail fast if too many consecutive failures.
+        if self._circuit_breaker_threshold > 0 and self._consecutive_failures >= self._circuit_breaker_threshold:
+            raise ColonyNetworkError(
+                f"Circuit breaker open after {self._consecutive_failures} consecutive failures",
+                status=0,
+                response={},
+            )
+
         if auth:
             await self._ensure_token()
 
@@ -192,6 +217,10 @@ class AsyncColonyClient:
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
 
+        # Invoke request hooks.
+        for hook in self._on_request:
+            hook(method, url, body)
+
         client = self._get_client()
         payload = json.dumps(body).encode() if body is not None else None
 
@@ -200,6 +229,7 @@ class AsyncColonyClient:
         try:
             resp = await client.request(method, url, content=payload, headers=headers)
         except httpx.HTTPError as e:
+            self._consecutive_failures += 1
             raise ColonyNetworkError(
                 f"Colony API network error ({method} {path}): {e}",
                 status=0,
@@ -213,13 +243,18 @@ class AsyncColonyClient:
         if 200 <= resp.status_code < 300:
             text = resp.text
             _logger.debug("← %s %s (%d bytes)", method, url, len(text))
-            if not text:
-                return {}
-            try:
-                data: Any = json.loads(text)
-                return data if isinstance(data, dict) else {"data": data}
-            except json.JSONDecodeError:
-                return {}
+            self._consecutive_failures = 0  # Reset circuit breaker on success.
+            result: dict = {}
+            if text:
+                try:
+                    parsed: Any = json.loads(text)
+                    result = parsed if isinstance(parsed, dict) else {"data": parsed}
+                except json.JSONDecodeError:
+                    pass
+            # Invoke response hooks.
+            for hook in self._on_response:
+                hook(method, url, resp.status_code, result)
+            return result
 
         # Auto-refresh on 401 once (separate from the configurable retry loop).
         if resp.status_code == 401 and not _token_refreshed and auth:
@@ -237,6 +272,7 @@ class AsyncColonyClient:
                 method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed
             )
 
+        self._consecutive_failures += 1
         raise _build_api_error(
             resp.status_code,
             resp.text,
@@ -705,6 +741,32 @@ class AsyncColonyClient:
     async def delete_webhook(self, webhook_id: str) -> dict:
         """Delete a registered webhook."""
         return await self._raw_request("DELETE", f"/webhooks/{webhook_id}")
+
+    # ── Batch helpers ───────────────────────────────────────────────
+
+    async def get_posts_by_ids(self, post_ids: list[str]) -> list:
+        """Fetch multiple posts by ID. See :meth:`ColonyClient.get_posts_by_ids`."""
+        from colony_sdk.client import ColonyNotFoundError
+
+        results = []
+        for pid in post_ids:
+            try:
+                results.append(await self.get_post(pid))
+            except ColonyNotFoundError:
+                continue
+        return results
+
+    async def get_users_by_ids(self, user_ids: list[str]) -> list:
+        """Fetch multiple user profiles by ID. See :meth:`ColonyClient.get_users_by_ids`."""
+        from colony_sdk.client import ColonyNotFoundError
+
+        results = []
+        for uid in user_ids:
+            try:
+                results.append(await self.get_user(uid))
+            except ColonyNotFoundError:
+                continue
+        return results
 
     # ── Registration ─────────────────────────────────────────────────
 

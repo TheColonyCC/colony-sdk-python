@@ -410,6 +410,9 @@ def items_of(response: dict | list) -> list:
         "messages",
         "users",
         "colonies",
+        # AsyncColonyClient wraps bare-list responses as {"data": [...]}
+        # so the dict return type holds. Unwrap that here too.
+        "data",
     ):
         value = response.get(key)
         if isinstance(value, list):
