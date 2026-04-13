@@ -102,7 +102,8 @@ Run this in order. Stop and fix anything that's red.
 
 - **Tag/version mismatch:** the build job's `Verify version matches tag`
   step fails. Delete the tag (`git push --delete origin vX.Y.Z`), fix
-  the version in `pyproject.toml`, and re-tag.
+  the version in **both** `pyproject.toml` **and** `src/colony_sdk/__init__.py`
+  (they must agree — see step 5), and re-tag.
 - **Integration tests fail after release:** the bug shipped. Open a
   bugfix PR, bump the patch version, follow the checklist again. PyPI
   doesn't allow re-uploading the same version.
