@@ -109,9 +109,7 @@ class TestGetPostConversation:
         assert parent is not None, f"parent {test_comment['id']} missing from threads={top_ids}"
         replies = parent.get("replies", [])
         reply_ids = [r.get("id") for r in replies if isinstance(r, dict)]
-        assert reply["id"] in reply_ids, (
-            f"reply {reply['id']} not nested under parent; parent.replies={reply_ids}"
-        )
+        assert reply["id"] in reply_ids, f"reply {reply['id']} not nested under parent; parent.replies={reply_ids}"
 
     def test_thread_count_matches_threads_length(
         self, client: ColonyClient, test_post: dict, test_comment: dict
