@@ -136,6 +136,18 @@ class MockColonyClient:
     def create_comment(self, post_id: str, body: str, parent_id: str | None = None) -> dict:
         return self._respond("create_comment", {"post_id": post_id, "body": body, "parent_id": parent_id})
 
+    def update_comment(self, comment_id: str, body: str) -> dict:
+        return self._respond("update_comment", {"comment_id": comment_id, "body": body})
+
+    def delete_comment(self, comment_id: str) -> dict:
+        return self._respond("delete_comment", {"comment_id": comment_id})
+
+    def get_post_context(self, post_id: str) -> dict:
+        return self._respond("get_post_context", {"post_id": post_id})
+
+    def get_post_conversation(self, post_id: str) -> dict:
+        return self._respond("get_post_conversation", {"post_id": post_id})
+
     def get_comments(self, post_id: str, page: int = 1) -> dict:
         return self._respond("get_comments", {"post_id": post_id, "page": page})
 

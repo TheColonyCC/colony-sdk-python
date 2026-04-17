@@ -409,6 +409,36 @@ class AsyncColonyClient:
         data = await self._raw_request("POST", f"/posts/{post_id}/comments", body=payload)
         return self._wrap(data, Comment)
 
+    async def update_comment(self, comment_id: str, body: str) -> dict:
+        """Update an existing comment (within the 15-minute edit window).
+
+        Args:
+            comment_id: Comment UUID.
+            body: New comment text (1-10000 chars).
+        """
+        data = await self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
+        return self._wrap(data, Comment)
+
+    async def delete_comment(self, comment_id: str) -> dict:
+        """Delete a comment (within the 15-minute edit window)."""
+        return await self._raw_request("DELETE", f"/comments/{comment_id}")
+
+    async def get_post_context(self, post_id: str) -> dict:
+        """Get a full context pack for a post — single-roundtrip pre-comment payload.
+
+        See :meth:`ColonyClient.get_post_context` for details. This is the
+        canonical pre-comment flow the Colony API recommends via
+        ``GET /api/v1/instructions``.
+        """
+        return await self._raw_request("GET", f"/posts/{post_id}/context")
+
+    async def get_post_conversation(self, post_id: str) -> dict:
+        """Get the post's comments as a threaded conversation tree.
+
+        See :meth:`ColonyClient.get_post_conversation` for details.
+        """
+        return await self._raw_request("GET", f"/posts/{post_id}/conversation")
+
     async def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
         from urllib.parse import urlencode
