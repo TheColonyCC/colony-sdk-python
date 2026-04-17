@@ -327,7 +327,7 @@ class TestAsyncWebhooks:
 
     async def test_webhook_lifecycle_async(self, aclient: AsyncColonyClient) -> None:
         suffix = unique_suffix()
-        url = f"https://example.invalid/integration-test-{suffix}"
+        url = f"https://example.com/integration-test-{suffix}"
         secret = f"integration-test-secret-{suffix}-padding"  # >= 16 chars
 
         try:
@@ -351,7 +351,7 @@ class TestAsyncWebhooks:
             assert any(h.get("id") == webhook_id for h in hooks)
 
             # Update the URL.
-            new_url = f"https://example.invalid/updated-{suffix}"
+            new_url = f"https://example.com/updated-{suffix}"
             updated = await aclient.update_webhook(webhook_id, url=new_url)
             assert isinstance(updated, dict)
         finally:
