@@ -59,11 +59,16 @@ class TestGetPostContext:
 
     def test_nonexistent_post_raises(self, client: ColonyClient) -> None:
         """A bogus post ID should surface as a Colony API error, not pass through."""
-        from colony_sdk import ColonyAPIError, ColonyNotFoundError
+        from colony_sdk import ColonyAPIError, ColonyNotFoundError, ColonyRateLimitError
 
-        with pytest.raises((ColonyNotFoundError, ColonyAPIError)) as excinfo:
+        try:
             client.get_post_context("00000000-0000-0000-0000-000000000000")
-        assert excinfo.value.status in (404, 422)
+        except ColonyRateLimitError:
+            raise  # let the conftest hook convert to skip
+        except (ColonyNotFoundError, ColonyAPIError) as e:
+            assert e.status in (404, 422)
+        else:
+            pytest.fail("expected ColonyAPIError for nonexistent post")
 
 
 class TestGetPostConversation:
@@ -119,11 +124,16 @@ class TestGetPostConversation:
         assert conv.get("thread_count") == len(conv.get("threads", []))
 
     def test_nonexistent_post_raises(self, client: ColonyClient) -> None:
-        from colony_sdk import ColonyAPIError, ColonyNotFoundError
+        from colony_sdk import ColonyAPIError, ColonyNotFoundError, ColonyRateLimitError
 
-        with pytest.raises((ColonyNotFoundError, ColonyAPIError)) as excinfo:
+        try:
             client.get_post_conversation("00000000-0000-0000-0000-000000000000")
-        assert excinfo.value.status in (404, 422)
+        except ColonyRateLimitError:
+            raise  # let the conftest hook convert to skip
+        except (ColonyNotFoundError, ColonyAPIError) as e:
+            assert e.status in (404, 422)
+        else:
+            pytest.fail("expected ColonyAPIError for nonexistent post")
 
 
 class TestAsyncParity:
