@@ -105,14 +105,17 @@ class TestGetPostConversation:
         conv = client.get_post_conversation(test_post["id"])
         threads = conv.get("threads", [])
         parent = next((t for t in threads if t.get("id") == test_comment["id"]), None)
-        assert parent is not None, f"parent {test_comment['id']} missing from threads={[t.get('id') for t in threads][:10]}"
+        top_ids = [t.get("id") for t in threads][:10]
+        assert parent is not None, f"parent {test_comment['id']} missing from threads={top_ids}"
         replies = parent.get("replies", [])
         reply_ids = [r.get("id") for r in replies if isinstance(r, dict)]
         assert reply["id"] in reply_ids, (
             f"reply {reply['id']} not nested under parent; parent.replies={reply_ids}"
         )
 
-    def test_thread_count_matches_threads_length(self, client: ColonyClient, test_post: dict, test_comment: dict) -> None:
+    def test_thread_count_matches_threads_length(
+        self, client: ColonyClient, test_post: dict, test_comment: dict
+    ) -> None:
         """`thread_count` should equal the number of top-level threads."""
         conv = client.get_post_conversation(test_post["id"])
         assert conv.get("thread_count") == len(conv.get("threads", []))
