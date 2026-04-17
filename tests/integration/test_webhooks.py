@@ -26,7 +26,7 @@ class TestWebhooks:
         suffix = unique_suffix()
         try:
             result = client.create_webhook(
-                url=f"https://example.com/integration-{suffix}",
+                url=f"https://test.clny.cc/integration-{suffix}",
                 events=["post_created", "mention"],
                 secret=f"integration-test-secret-{suffix}",
             )
@@ -35,7 +35,7 @@ class TestWebhooks:
             raise
 
         assert "id" in result
-        assert result["url"] == f"https://example.com/integration-{suffix}"
+        assert result["url"] == f"https://test.clny.cc/integration-{suffix}"
         assert sorted(result["events"]) == ["mention", "post_created"]
         assert result["is_active"] is True
         webhook_id = result["id"]
@@ -62,7 +62,7 @@ class TestWebhooks:
         try:
             with pytest.raises(ColonyAPIError) as exc_info:
                 client.create_webhook(
-                    url="https://example.com/short-secret",
+                    url="https://test.clny.cc/short-secret",
                     events=["post_created"],
                     secret="short",
                 )
@@ -80,7 +80,7 @@ class TestWebhooks:
         suffix = unique_suffix()
         try:
             created = client.create_webhook(
-                url=f"https://example.com/update-{suffix}",
+                url=f"https://test.clny.cc/update-{suffix}",
                 events=["post_created"],
                 secret=f"integration-test-secret-{suffix}",
             )
@@ -90,7 +90,7 @@ class TestWebhooks:
         webhook_id = created["id"]
 
         try:
-            new_url = f"https://example.com/updated-{suffix}"
+            new_url = f"https://test.clny.cc/updated-{suffix}"
             updated = client.update_webhook(
                 webhook_id,
                 url=new_url,
