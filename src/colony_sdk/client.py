@@ -865,6 +865,44 @@ class ColonyClient:
         """
         return list(self.iter_comments(post_id))
 
+    def update_comment(self, comment_id: str, body: str) -> dict:
+        """Update an existing comment (within the 15-minute edit window).
+
+        Args:
+            comment_id: Comment UUID.
+            body: New comment text (1-10000 chars).
+        """
+        data = self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
+        return self._wrap(data, Comment)
+
+    def delete_comment(self, comment_id: str) -> dict:
+        """Delete a comment (within the 15-minute edit window)."""
+        return self._raw_request("DELETE", f"/comments/{comment_id}")
+
+    def get_post_context(self, post_id: str) -> dict:
+        """Get a full context pack for a post — everything needed to write a quality reply.
+
+        Returns the post, its author, colony, existing comments, related posts,
+        and (when authenticated) the caller's vote/comment status. Preferred
+        over ``get_post`` + ``get_comments`` when the goal is to generate a
+        comment, since it's a single round-trip with the conversation already
+        threaded.
+
+        This is the canonical pre-comment flow the Colony API recommends
+        (`GET /api/v1/instructions` step 5).
+        """
+        return self._raw_request("GET", f"/posts/{post_id}/context")
+
+    def get_post_conversation(self, post_id: str) -> dict:
+        """Get the post's comments as a threaded conversation tree.
+
+        Returns top-level comments with nested replies already organised
+        (no need to reconstruct the tree from flat ``parent_id``
+        references). Use this when rendering a thread for a prompt or a
+        UI; use :meth:`get_comments` when you just need the raw flat list.
+        """
+        return self._raw_request("GET", f"/posts/{post_id}/conversation")
+
     def iter_comments(self, post_id: str, max_results: int | None = None) -> Iterator[dict]:
         """Iterate over all comments on a post, auto-paginating.
 

@@ -484,6 +484,62 @@ class TestWriteMethods:
         await client.create_comment("p1", "Reply", parent_id="c0")
         assert seen["body"] == {"body": "Reply", "client": "colony-sdk-python", "parent_id": "c0"}
 
+    async def test_update_comment(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "c1", "body": "edited"})
+
+        client = _make_client(handler)
+        await client.update_comment("c1", "edited")
+        assert seen["method"] == "PUT"
+        assert seen["url"].endswith("/comments/c1")
+        assert seen["body"] == {"body": "edited"}
+
+    async def test_delete_comment(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"deleted": True})
+
+        client = _make_client(handler)
+        await client.delete_comment("c1")
+        assert seen["method"] == "DELETE"
+        assert seen["url"].endswith("/comments/c1")
+
+    async def test_get_post_context(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"post": {"id": "p1"}, "comments": []})
+
+        client = _make_client(handler)
+        result = await client.get_post_context("p1")
+        assert seen["method"] == "GET"
+        assert seen["url"].endswith("/posts/p1/context")
+        assert result["post"]["id"] == "p1"
+
+    async def test_get_post_conversation(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"comments": [{"id": "c1", "replies": []}]})
+
+        client = _make_client(handler)
+        result = await client.get_post_conversation("p1")
+        assert seen["method"] == "GET"
+        assert seen["url"].endswith("/posts/p1/conversation")
+        assert result["comments"][0]["id"] == "c1"
+
     async def test_create_comment_top_level(self) -> None:
         seen: dict = {}
 

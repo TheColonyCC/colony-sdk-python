@@ -475,6 +475,53 @@ class TestComments:
         assert "parent_id" not in body
 
     @patch("colony_sdk.client.urlopen")
+    def test_update_comment(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "c1", "body": "edited"})
+        client = _authed_client()
+
+        client.update_comment("c1", "edited")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/comments/c1"
+        assert _last_body(mock_urlopen) == {"body": "edited"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_comment(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "deleted"})
+        client = _authed_client()
+
+        client.delete_comment("c1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/comments/c1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_post_context(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"post": {"id": "p1"}, "comments": []})
+        client = _authed_client()
+
+        result = client.get_post_context("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/posts/p1/context"
+        assert result["post"]["id"] == "p1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_post_conversation(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"comments": [{"id": "c1", "replies": []}]})
+        client = _authed_client()
+
+        result = client.get_post_conversation("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/posts/p1/conversation"
+        assert result["comments"][0]["id"] == "c1"
+
+    @patch("colony_sdk.client.urlopen")
     def test_get_comments(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"comments": [], "total": 0})
         client = _authed_client()
