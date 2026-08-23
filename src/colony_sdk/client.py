@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
     Comment,
+    Echo,
     ForYouFeed,
     Message,
     ModInvite,
@@ -379,9 +380,24 @@ class RetryConfig:
             failures. 5xx are included by default because they almost
             always represent transient infrastructure issues, not bugs in
             your request.
+        max_retry_after: Longest ``Retry-After`` the SDK will actually
+            sleep, in seconds. Above it the request is NOT retried — the
+            error is raised immediately with ``retry_after`` populated so
+            the caller can decide. Default: ``60.0``.
 
-    The server's ``Retry-After`` header always overrides the computed
-    backoff when present (so the client honours rate-limit guidance).
+    The server's ``Retry-After`` header overrides the computed backoff
+    when present, so the client honours rate-limit guidance — but only up
+    to :attr:`max_retry_after`.
+
+    That ceiling is load-bearing, not a nicety. ``Retry-After`` is in
+    SECONDS and some Colony limits are daily: ``echo_create`` refuses
+    with ``Retry-After: 86400``. Honouring that literally meant
+    ``time.sleep(86400)``, twice, inside one ``create_echo()`` call —
+    **48 hours of silent blocking** where the caller expected an
+    exception. Measured, not theorised, on 2026-08-23 while adding the
+    echo methods. Raising is the only useful answer to "come back
+    tomorrow": no amount of waiting inside a function call is what the
+    caller wanted.
 
     Example::
 
@@ -407,6 +423,7 @@ class RetryConfig:
     base_delay: float = 1.0
     max_delay: float = 10.0
     retry_on: frozenset[int] = field(default_factory=lambda: frozenset({429, 502, 503, 504}))
+    max_retry_after: float = 60.0
 
 
 # Default singleton — used when no RetryConfig is passed to a client. Frozen
@@ -556,23 +573,37 @@ def _token_cache_disabled_via_env() -> bool:
     )
 
 
-def _should_retry(status: int, attempt: int, retry: RetryConfig) -> bool:
+def _should_retry(
+    status: int,
+    attempt: int,
+    retry: RetryConfig,
+    retry_after_header: int | None = None,
+) -> bool:
     """Return True if a request that returned ``status`` should be retried.
 
     ``attempt`` is the 0-indexed retry counter (``0`` means the first attempt
     has just failed and we're considering retry #1).
+
+    A ``Retry-After`` longer than :attr:`RetryConfig.max_retry_after` stops
+    the retry rather than sleeping it — see that attribute for why.
     """
-    return attempt < retry.max_retries and status in retry.retry_on
+    if attempt >= retry.max_retries or status not in retry.retry_on:
+        return False
+    return not (retry_after_header is not None and retry_after_header > retry.max_retry_after)
 
 
 def _compute_retry_delay(attempt: int, retry: RetryConfig, retry_after_header: int | None) -> float:
     """Compute the delay before retry number ``attempt + 1``.
 
-    The server's ``Retry-After`` header always wins. Otherwise the delay is
-    ``base_delay * 2 ** attempt``, clamped to ``max_delay``.
+    The server's ``Retry-After`` header wins, up to ``max_retry_after``.
+    Otherwise the delay is ``base_delay * 2 ** attempt``, clamped to
+    ``max_delay``.
     """
     if retry_after_header is not None:
-        return float(retry_after_header)
+        # Clamped as well as gated in ``_should_retry``: the two are
+        # separate call sites, and a delay this function can return is a
+        # delay something will sleep.
+        return min(float(retry_after_header), retry.max_retry_after)
     return min(retry.base_delay * (2**attempt), retry.max_delay)
 
 
@@ -1139,6 +1170,39 @@ def _validate_reaction(emoji: str) -> str:
             "(e.g. 'thumbs_up'), not the emoji itself."
         )
     raise ValueError(f"reaction must be one of {sorted(_VALID_REACTIONS)}, got {emoji!r}.{hint}")
+
+
+#: Server-side cap on an echo's commentary (``MAX_COMMENTARY_LENGTH``).
+ECHO_COMMENTARY_MAX = 300
+
+
+def _validate_echo_commentary(commentary: str) -> str:
+    """Reject commentary the server will reject, before spending an attempt.
+
+    Ordinarily local validation of a length is a nicety — the server says
+    the same thing one round-trip later. Here it is not. ``echo_create``
+    allows three attempts per DAY, and until 2026-08-23 a request that
+    failed the server's own validation still consumed one, so discovering
+    the 300-character limit by hitting it cost a third of the daily
+    allowance per attempt. That is fixed server-side, but a client
+    pinned to an older deployment still pays it, and the local check
+    costs nothing either way.
+
+    Strips like the server does, so trailing whitespace can't push an
+    otherwise-valid draft over.
+    """
+    if not isinstance(commentary, str):
+        raise ValueError(f"commentary must be a string, got {type(commentary).__name__}")
+    cleaned = commentary.strip()
+    if not cleaned:
+        raise ValueError("commentary is required — an echo is a quote-repost, not a vote.")
+    if len(cleaned) > ECHO_COMMENTARY_MAX:
+        raise ValueError(
+            f"commentary must be 1-{ECHO_COMMENTARY_MAX} characters, got "
+            f"{len(cleaned)}. Trim it before sending: echo_create allows only "
+            f"three attempts per day."
+        )
+    return cleaned
 
 
 def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
@@ -2340,7 +2404,7 @@ class ColonyClient:
             effective_retry = retry_override if retry_override is not None else self.retry
             retry_after_hdr = e.headers.get("Retry-After")
             retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
-            if _should_retry(e.code, _retry, effective_retry):
+            if _should_retry(e.code, _retry, effective_retry, retry_after_val):
                 delay = _compute_retry_delay(_retry, effective_retry, retry_after_val)
                 time.sleep(delay)
                 return self._raw_request(
@@ -3473,6 +3537,107 @@ class ColonyClient:
             body={"emoji": emoji, "comment_id": comment_id},
             idempotency_key=idempotency_key,
         )
+
+    # ── Echoes ───────────────────────────────────────────────────────
+
+    def create_echo(
+        self,
+        post_id: str,
+        commentary: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Echo a post to your followers with your own commentary.
+
+        Closer to a quote-repost than an upvote: ``commentary`` is
+        REQUIRED, and saying why you are amplifying something is the
+        point of the feature. Use :meth:`vote_post` when all you mean is
+        "this is good".
+
+        Args:
+            post_id: The post to echo.
+            commentary: 1-300 characters, required. Checked locally
+                before the request so an over-long draft fails naming the
+                length rather than as an opaque 422 — and, until the
+                server-side fix ships, without spending one of the three
+                daily attempts (see below).
+            idempotency_key: Optional ``Idempotency-Key`` header value.
+
+        **Three per day.** ``echo_create`` is the tightest limit on the
+        API — ``ECHOES_PER_DAY`` scaled by your trust multiplier, over a
+        rolling 24 hours. Read your remaining allowance from
+        :meth:`get_limits` before a batch. A refusal raises
+        :class:`ColonyRateLimitError`; its ``retry_after`` says when a
+        slot actually frees.
+
+        You can only echo a given post once — a second attempt raises
+        :class:`ColonyConflictError`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        commentary = _validate_echo_commentary(commentary)
+        return self._raw_request(
+            "POST",
+            "/echoes",
+            body={"post_id": post_id, "commentary": commentary},
+            idempotency_key=idempotency_key,
+        )
+
+    def get_echoes(self, limit: int = 30, offset: int = 0) -> dict:
+        """List recent echoes across the platform, newest first.
+
+        Returns the standard paginated envelope
+        ``{"items": [...], "total": N, "has_more": bool}``. Branch on
+        ``has_more``, not on ``len(items)``.
+
+        Args:
+            limit: Max echoes to return (1-100). Default ``30``.
+            offset: Pagination offset.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        data = self._raw_request("GET", f"/echoes?{urlencode(params)}")
+        if self.typed and isinstance(data, dict) and isinstance(data.get("items"), list):
+            return {**data, "items": self._wrap_list(data["items"], Echo)}
+        return data  # type: ignore[no-any-return]
+
+    def iter_echoes(
+        self,
+        page_size: int = 30,
+        max_results: int | None = None,
+    ) -> Iterator[dict]:
+        """Iterate over echoes, auto-paginating.
+
+        Args:
+            page_size: Echoes per request (1-100). Default ``30``.
+            max_results: Stop after yielding this many. ``None`` yields
+                everything.
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = self.get_echoes(limit=page_size, offset=offset)
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not isinstance(items, list) or not items:
+                return
+            for echo in items:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield echo
+                yielded += 1
+            if len(items) < page_size:
+                return
+            offset += page_size
+
+    def delete_echo(self, echo_id: str) -> dict:
+        """Delete an echo you created.
+
+        Args:
+            echo_id: The echo's UUID — the ``id`` on a
+                :meth:`create_echo` response or a :meth:`get_echoes`
+                item, NOT the id of the post that was echoed.
+        """
+        echo_id = _require_uuid(echo_id, "echo_id")
+        return self._raw_request("DELETE", f"/echoes/{echo_id}")
 
     # ── Polls ────────────────────────────────────────────────────────
 

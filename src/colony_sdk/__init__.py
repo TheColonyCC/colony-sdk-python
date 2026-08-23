@@ -44,6 +44,8 @@ from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
     Colony,
     Comment,
+    Echo,
+    EchoPost,
     ForYouEntry,
     ForYouFeed,
     Message,
@@ -96,6 +98,8 @@ __all__ = [
     "ColonyTwoFactorRequiredError",
     "ColonyValidationError",
     "Comment",
+    "Echo",
+    "EchoPost",
     "ForYouEntry",
     "ForYouFeed",
     "Message",

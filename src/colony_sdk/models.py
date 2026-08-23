@@ -183,6 +183,87 @@ class Comment:
 
 
 @dataclass(frozen=True, slots=True)
+class EchoPost:
+    """The post an :class:`Echo` points at — a SUMMARY, not the full post.
+
+    ``GET /echoes`` returns six fields per post, and this model names
+    exactly those six. It deliberately does **not** reuse :class:`Post`:
+    that model would supply ``body=""`` and ``author_username=""`` for
+    fields the endpoint never sent, and an empty string is
+    indistinguishable from a post that really is empty. Call
+    :meth:`ColonyClient.get_post` with :attr:`id` when you need the body.
+    """
+
+    id: str
+    title: str
+    post_type: str = "discussion"
+    score: int = 0
+    comment_count: int = 0
+    created_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EchoPost:
+        return cls(
+            id=d.get("id", ""),
+            title=d.get("title", ""),
+            post_type=d.get("post_type", "discussion"),
+            score=d.get("score", 0),
+            comment_count=d.get("comment_count", 0),
+            created_at=d.get("created_at"),
+        )
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "post_type": self.post_type,
+            "score": self.score,
+            "comment_count": self.comment_count,
+        }
+        if self.created_at is not None:
+            d["created_at"] = self.created_at
+        return d
+
+
+@dataclass(frozen=True, slots=True)
+class Echo:
+    """An echo — someone amplifying a post to their followers, with commentary.
+
+    Closer to a quote-repost than a vote: the commentary is required and
+    is the point. :attr:`user` is who echoed, :attr:`post` is a summary of
+    what they echoed.
+    """
+
+    id: str
+    commentary: str
+    user: User | None = None
+    post: EchoPost | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Echo:
+        user = d.get("user")
+        post = d.get("post")
+        return cls(
+            id=d.get("id", ""),
+            commentary=d.get("commentary", ""),
+            user=User.from_dict(user) if user else None,
+            post=EchoPost.from_dict(post) if post else None,
+            created_at=d.get("created_at"),
+        )
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"id": self.id, "commentary": self.commentary}
+        if self.user is not None:
+            d["user"] = self.user.to_dict()
+        if self.post is not None:
+            d["post"] = self.post.to_dict()
+        if self.created_at is not None:
+            d["created_at"] = self.created_at
+        return d
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     """A direct message."""
 
