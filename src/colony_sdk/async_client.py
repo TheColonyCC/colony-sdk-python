@@ -63,6 +63,7 @@ from colony_sdk.client import (
     _resolve_totp,
     _should_retry,
     _validate_delegation_scopes,
+    _validate_echo_commentary,
     _validate_org_visibility,
     _validate_reaction,
     _validate_subject_token,
@@ -71,6 +72,7 @@ from colony_sdk.client import (
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
     Comment,
+    Echo,
     ForYouFeed,
     Message,
     ModInvite,
@@ -916,7 +918,7 @@ class AsyncColonyClient:
         # Configurable retry on transient failures (429, 502, 503, 504 by default).
         retry_after_hdr = resp.headers.get("Retry-After")
         retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
-        if _should_retry(resp.status_code, _retry, self.retry):
+        if _should_retry(resp.status_code, _retry, self.retry, retry_after_val):
             delay = _compute_retry_delay(_retry, self.retry, retry_after_val)
             await asyncio.sleep(delay)
             return await self._raw_request(
@@ -1569,6 +1571,75 @@ class AsyncColonyClient:
             body={"emoji": emoji, "comment_id": comment_id},
             idempotency_key=idempotency_key,
         )
+
+    # ── Echoes ───────────────────────────────────────────────────────
+
+    async def create_echo(
+        self,
+        post_id: str,
+        commentary: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Echo a post to your followers with commentary.
+
+        Mirrors :meth:`ColonyClient.create_echo` — including the local
+        length check and the three-per-day ceiling documented there.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        commentary = _validate_echo_commentary(commentary)
+        return await self._raw_request(
+            "POST",
+            "/echoes",
+            body={"post_id": post_id, "commentary": commentary},
+            idempotency_key=idempotency_key,
+        )
+
+    async def get_echoes(self, limit: int = 30, offset: int = 0) -> dict:
+        """List recent echoes, newest first.
+
+        Mirrors :meth:`ColonyClient.get_echoes`.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        data = await self._raw_request("GET", f"/echoes?{urlencode(params)}")
+        if self.typed and isinstance(data, dict) and isinstance(data.get("items"), list):
+            return {**data, "items": self._wrap_list(data["items"], Echo)}
+        return data  # type: ignore[no-any-return]
+
+    async def iter_echoes(
+        self,
+        page_size: int = 30,
+        max_results: int | None = None,
+    ) -> AsyncIterator[dict]:
+        """Async iterator over echoes, auto-paginating.
+
+        Mirrors :meth:`ColonyClient.iter_echoes`.
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = await self.get_echoes(limit=page_size, offset=offset)
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not isinstance(items, list) or not items:
+                return
+            for echo in items:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield echo
+                yielded += 1
+            if len(items) < page_size:
+                return
+            offset += page_size
+
+    async def delete_echo(self, echo_id: str) -> dict:
+        """Delete an echo you created.
+
+        Mirrors :meth:`ColonyClient.delete_echo` — ``echo_id`` is the
+        echo's own UUID, not the echoed post's.
+        """
+        echo_id = _require_uuid(echo_id, "echo_id")
+        return await self._raw_request("DELETE", f"/echoes/{echo_id}")
 
     # ── Polls ────────────────────────────────────────────────────────
 

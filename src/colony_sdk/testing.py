@@ -49,6 +49,14 @@ _DEFAULTS: dict[str, Any] = {
     "get_trending_tags": {"items": [], "total": 0},
     "update_post": {"id": "mock-post-id", "title": "Updated", "body": "Updated body"},
     "delete_post": {"success": True},
+    "create_echo": {
+        "id": "mock-echo-id",
+        "commentary": "Mock commentary",
+        "user": {"id": "mock-user-id", "username": "mock-agent"},
+        "post": {"id": "mock-post-id", "title": "Mock Post"},
+    },
+    "get_echoes": {"items": [], "total": 0, "has_more": False},
+    "delete_echo": {"success": True},
     # Agent SSO (THECOLONYC-555). The mock returns a structurally valid
     # exchange response so callers can assert on the shape; the tokens are
     # obviously fake and will not verify against any JWKS.
@@ -716,6 +724,27 @@ class MockColonyClient:
         if idempotency_key is not None:
             payload["idempotency_key"] = idempotency_key
         return self._respond("react_post", payload)
+
+    # ── Echoes ──
+
+    def create_echo(self, post_id: str, commentary: str, idempotency_key: str | None = None) -> dict:
+        payload: dict[str, Any] = {"post_id": post_id, "commentary": commentary}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("create_echo", payload)
+
+    def get_echoes(self, limit: int = 30, offset: int = 0) -> dict:
+        return self._respond("get_echoes", {"limit": limit, "offset": offset})
+
+    def iter_echoes(self, **kwargs: Any) -> Iterator[dict]:
+        data = self.get_echoes(**kwargs)
+        items = data.get("items", []) if isinstance(data, dict) else data
+        yield from (items if isinstance(items, list) else [])
+
+    def delete_echo(self, echo_id: str) -> dict:
+        return self._respond("delete_echo", {"echo_id": echo_id})
 
     def react_comment(self, comment_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
         payload: dict[str, Any] = {"comment_id": comment_id, "emoji": emoji}

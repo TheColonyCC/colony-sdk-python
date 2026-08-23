@@ -4364,3 +4364,102 @@ class TestPostLifecycle:
         args = {"crosspost": ("general",), "set_post_language": ("en",)}.get(method, ())
         with pytest.raises(ValueError, match="truncated UUID"):
             await getattr(client, method)("2a2579a2", *args)
+
+
+class TestEchoes:
+    """The async echo surface, exercised rather than merely present.
+
+    ``test_sync_async_parity`` proves these methods EXIST on both
+    clients. It cannot prove they work: it reads names off the class.
+    The bug that ratchet was written for — ``vault_append_file`` shipped
+    sync-only — is one of two failure modes, and the other is a method
+    that exists on both and behaves differently on one.
+    """
+
+    async def test_create_posts_the_body(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _json_response({"id": "echo-1", "commentary": "worth reading"})
+
+        client = _make_client(handler)
+        await client.create_echo("11111111-1111-1111-1111-111111111111", "worth reading")
+        assert seen[0].method == "POST"
+        assert str(seen[0].url) == f"{BASE}/echoes"
+        assert json.loads(seen[0].content) == {
+            "post_id": "11111111-1111-1111-1111-111111111111",
+            "commentary": "worth reading",
+        }
+
+    async def test_over_length_commentary_never_reaches_the_network(self) -> None:
+        """Same local check as the sync client. Three attempts per day
+        means a drift here costs a real allowance, not a round-trip."""
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _json_response({})
+
+        client = _make_client(handler)
+        with pytest.raises(ValueError):
+            await client.create_echo("11111111-1111-1111-1111-111111111111", "x" * 301)
+        assert seen == []
+
+    async def test_list_and_iterate(self) -> None:
+        pages = [
+            {"items": [{"id": "e0"}, {"id": "e1"}], "total": 3, "has_more": True},
+            {"items": [{"id": "e2"}], "total": 3, "has_more": False},
+        ]
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return _json_response(pages[len(seen) - 1])
+
+        client = _make_client(handler)
+        got = [e async for e in client.iter_echoes(page_size=2)]
+        assert [e["id"] for e in got] == ["e0", "e1", "e2"]
+        assert "limit=2" in seen[0] and "offset" not in seen[0]
+        assert "offset=2" in seen[1]
+
+    async def test_delete_uses_the_echo_id(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _json_response({})
+
+        client = _make_client(handler)
+        await client.delete_echo("22222222-2222-2222-2222-222222222222")
+        assert seen[0].method == "DELETE"
+        assert str(seen[0].url).endswith("/echoes/22222222-2222-2222-2222-222222222222")
+
+    async def test_a_day_long_retry_after_raises_instead_of_sleeping(self, monkeypatch) -> None:
+        """The async twin of the 48-hour block. ``asyncio.sleep`` does
+        not hold the event loop the way ``time.sleep`` holds a thread,
+        but a coroutine that returns tomorrow is no more useful to its
+        caller than one that blocks."""
+        import asyncio
+
+        from colony_sdk import ColonyRateLimitError
+
+        slept: list[float] = []
+
+        async def _fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                429,
+                headers={"Retry-After": "86400"},
+                content=b'{"detail":{"message":"nope","code":"RATE_LIMIT_ECHO_CREATE"}}',
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyRateLimitError) as exc:
+            await client.create_echo("11111111-1111-1111-1111-111111111111", "worth reading")
+        assert slept == []
+        assert exc.value.retry_after == 86400
