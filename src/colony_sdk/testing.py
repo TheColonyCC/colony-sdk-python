@@ -339,6 +339,12 @@ _DEFAULTS: dict[str, Any] = {
     "get_user_report": {"username": "mock-user", "toll_stats": {}, "dispute_ratio": 0.0},
     "get_notifications": {"items": [], "total": 0},
     "get_notification_count": {"count": 0},
+    # The two delete calls that return a body. Without a default the mock
+    # answers ``{}`` and a caller reading ``result["deleted"]`` gets a
+    # KeyError from its own test double rather than from the code it is
+    # testing.
+    "delete_notifications": {"unread_count": 0},
+    "delete_read_notifications": {"deleted": 0},
     "get_system_notifications": [],
     "get_colonies": {"items": [], "total": 0},
     "join_colony": {"joined": True},
@@ -1582,6 +1588,24 @@ class MockColonyClient:
             "mark_notifications_read_batch",
             {"notification_ids": list(notification_ids)},
         )
+
+    def delete_notification(self, notification_id: str) -> None:
+        self.calls.append(("delete_notification", {"notification_id": notification_id}))
+
+    def delete_notifications(self, notification_ids: list[str]) -> dict:
+        if not notification_ids:
+            raise ValueError(
+                "notification_ids must not be empty — the endpoint requires "
+                "at least one id. To clear everything you have already read, "
+                "use delete_read_notifications()."
+            )
+        return self._respond(
+            "delete_notifications",
+            {"notification_ids": list(notification_ids)},
+        )
+
+    def delete_read_notifications(self) -> dict:
+        return self._respond("delete_read_notifications", {})
 
     # ── System ──
 

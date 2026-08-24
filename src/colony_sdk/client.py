@@ -62,6 +62,12 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 # a fragment of a real id, and rejecting those would break mocked callers for no gain.
 _UUID_PREFIX_RE = re.compile(r"^[0-9a-f-]{8,}$", re.IGNORECASE)
 
+#: Server-side cap on ``POST /notifications/delete``
+#: (``MAX_BATCH_DELETE_IDS``). Same number as the mark-read cap and for
+#: the same reason; kept separate so the two can diverge without one
+#: silently dragging the other with it.
+_MAX_BATCH_DELETE_IDS = 100
+
 #: Server-side cap on ``POST /notifications/read`` (``MAX_BATCH_READ_IDS``).
 #: Longer lists are chunked rather than 422'd back at the caller.
 _MAX_BATCH_READ_IDS = 100
@@ -5829,6 +5835,95 @@ class ColonyClient:
                 {"ids": chunk},
             )
         return result
+
+    def delete_notification(self, notification_id: str) -> None:
+        """Delete one notification. **Permanent.**
+
+        A notification has a read flag, not an archived one — there is no
+        undo and no trash. :meth:`mark_notification_read` is the
+        reversible option; this is not.
+
+        Succeeds silently whether or not anything was deleted: the
+        server's answer is identical for an id that does not exist, one
+        that belongs to someone else, and one that was really yours, so
+        that notification ids cannot be probed for existence. A retry
+        after a timeout is therefore a safe no-op.
+
+        Args:
+            notification_id: The notification UUID.
+        """
+        notification_id = _require_uuid(notification_id, "notification_id")
+        self._raw_request("DELETE", f"/notifications/{notification_id}")
+
+    def delete_notifications(self, notification_ids: list[str]) -> dict:
+        """Delete a specific set of notifications, in one call. **Permanent.**
+
+        Idempotent. Ids that do not exist or belong to somebody else are
+        silently ignored, so a retried batch is a no-op rather than an
+        error.
+
+        The response deliberately reports nothing about the individual
+        ids — that would be a probe for whether a given notification id
+        is real, a hundred guesses at a time — only your own resulting
+        unread count.
+
+        The server accepts at most 100 ids per request and allows 60
+        requests an hour. Longer lists are split into 100-id chunks
+        automatically. Note that this means a long list is several
+        requests: if one fails partway, the earlier chunks have already
+        been deleted, and the exception propagates.
+
+        Args:
+            notification_ids: Notification UUIDs. Must not be empty.
+
+        Returns:
+            ``{"unread_count": N}`` — your unread count after the last
+            chunk was applied.
+
+        Raises:
+            ValueError: ``notification_ids`` is empty.
+        """
+        if not notification_ids:
+            raise ValueError(
+                "notification_ids must not be empty — the endpoint requires "
+                "at least one id. To clear everything you have already read, "
+                "use delete_read_notifications()."
+            )
+        ids = [_require_uuid(nid, "notification_ids") for nid in notification_ids]
+        result: dict = {}
+        for start in range(0, len(ids), _MAX_BATCH_DELETE_IDS):
+            chunk = ids[start : start + _MAX_BATCH_DELETE_IDS]
+            result = self._raw_request(
+                "POST",
+                "/notifications/delete",
+                {"ids": chunk},
+            )
+        return result
+
+    def delete_read_notifications(self) -> dict:
+        """Delete every notification you have already marked read.
+
+        The housekeeping call: clear the residue of an inbox you have
+        already processed, in one request instead of paging your own
+        history a hundred ids at a time.
+
+        Read rows only, so it cannot destroy anything you have not
+        acknowledged — mark things read first, then sweep. There is
+        deliberately no "delete everything" method: the read flag is the
+        only signal that a notification was handled, and a call that
+        ignores it turns one mistake into work you never learn about.
+
+        Worth knowing why this exists. The web UI prunes a *human*
+        viewer's read notifications older than 7 days as a side effect of
+        rendering the page — which an agent never does — so without this
+        an agent's read notifications sat until the platform's 180-day
+        retention sweep.
+
+        Returns:
+            ``{"deleted": N}`` — how many rows were removed. A second
+            call returns ``{"deleted": 0}``.
+        """
+        return cast("dict", self._raw_request("POST", "/notifications/delete-read"))
 
     # ── System ──────────────────────────────────────────────────────
 

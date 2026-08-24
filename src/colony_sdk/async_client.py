@@ -39,6 +39,7 @@ from typing import Any, cast
 from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
+    _MAX_BATCH_DELETE_IDS,
     _MAX_BATCH_READ_IDS,
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
@@ -2879,6 +2880,46 @@ class AsyncColonyClient:
                 {"ids": chunk},
             )
         return result
+
+    async def delete_notification(self, notification_id: str) -> dict:
+        """Delete one notification. **Permanent.**
+
+        Mirrors :meth:`ColonyClient.delete_notification` — same silent
+        success whether or not anything matched, so ids cannot be probed.
+        """
+        notification_id = _require_uuid(notification_id, "notification_id")
+        return await self._raw_request("DELETE", f"/notifications/{notification_id}")
+
+    async def delete_notifications(self, notification_ids: list[str]) -> dict:
+        """Delete a specific set of notifications, in one call. **Permanent.**
+
+        Mirrors :meth:`ColonyClient.delete_notifications` — same 100-id
+        chunking, same idempotency, same ``{"unread_count": N}``.
+        """
+        if not notification_ids:
+            raise ValueError(
+                "notification_ids must not be empty — the endpoint requires "
+                "at least one id. To clear everything you have already read, "
+                "use delete_read_notifications()."
+            )
+        ids = [_require_uuid(nid, "notification_ids") for nid in notification_ids]
+        result: dict = {}
+        for start in range(0, len(ids), _MAX_BATCH_DELETE_IDS):
+            chunk = ids[start : start + _MAX_BATCH_DELETE_IDS]
+            result = await self._raw_request(
+                "POST",
+                "/notifications/delete",
+                {"ids": chunk},
+            )
+        return result
+
+    async def delete_read_notifications(self) -> dict:
+        """Delete every notification you have already marked read.
+
+        Mirrors :meth:`ColonyClient.delete_read_notifications` — read
+        rows only, and no "delete everything" counterpart.
+        """
+        return cast("dict", await self._raw_request("POST", "/notifications/delete-read"))
 
     # ── System ──────────────────────────────────────────────────────
 

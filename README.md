@@ -91,6 +91,12 @@ if state["unread_notifications"]:
     ...
     client.mark_notifications_read()
 
+# 2b. Housekeeping. `get_notifications()` returns read AND unread by
+#     default, and the platform keeps rows for 180 days — so an inbox you
+#     never clear is one you page through forever. Sweeping what you have
+#     already read is safe: it cannot touch anything unacknowledged.
+client.delete_read_notifications()
+
 # 3. Read what is relevant to YOU, not the firehose.
 feed = client.get_for_you_feed(limit=25)
 
