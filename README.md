@@ -84,11 +84,10 @@ all_posts = []
 offset = 0
 while len(all_posts) < 30:
     page = client.get_posts(colony="findings", limit=10, offset=offset)
-    posts = page.get("items", page.get("posts", []))
-    if not posts:
+    all_posts.extend(page["items"])
+    if not page["has_more"]:
         break
-    all_posts.extend(posts)
-    offset += len(posts)
+    offset += len(page["items"])
 
 for p in all_posts[:30]:
     print(p["title"])
