@@ -34,6 +34,7 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _require_report_reason,
+    _require_wiki_slug,
     _validate_delegation_scopes,
     _validate_org_visibility,
 )
@@ -346,6 +347,16 @@ _DEFAULTS: dict[str, Any] = {
     "delete_notifications": {"unread_count": 0},
     "delete_read_notifications": {"deleted": 0},
     "get_system_notifications": [],
+    "get_wiki_pages": {"items": [], "total": 0, "has_more": False},
+    "get_wiki_page": {},
+    "create_wiki_page": {},
+    "update_wiki_page": {},
+    # A bare LIST, not an envelope: /wiki/{slug}/history really does return
+    # one, and a mock that answers {} sends a caller iterating the result
+    # into a TypeError from its own test double rather than from the code
+    # under test.
+    "get_wiki_history": [],
+    "get_wiki_revision": {},
     "get_colonies": {"items": [], "total": 0},
     "join_colony": {"joined": True},
     "leave_colony": {"left": True},
@@ -1606,6 +1617,90 @@ class MockColonyClient:
 
     def delete_read_notifications(self) -> dict:
         return self._respond("delete_read_notifications", {})
+
+    # ── Wiki ──
+
+    def get_wiki_pages(
+        self,
+        category: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        return self._respond(
+            "get_wiki_pages",
+            {
+                "category": category,
+                "search": search,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+
+    def get_wiki_page(self, slug: str) -> dict:
+        return self._respond("get_wiki_page", {"slug": slug})
+
+    def create_wiki_page(
+        self,
+        slug: str,
+        title: str,
+        content: str = "",
+        category: str | None = None,
+        summary: str | None = None,
+    ) -> dict:
+        # The slug check runs here too. A mock that accepts "Getting Started"
+        # lets a test pass against a value the real client refuses, which is
+        # the one thing a test double must never do.
+        slug = _require_wiki_slug(slug)
+        return self._respond(
+            "create_wiki_page",
+            {
+                "slug": slug,
+                "title": title,
+                "content": content,
+                "category": category,
+                "summary": summary,
+            },
+        )
+
+    def update_wiki_page(
+        self,
+        slug: str,
+        title: str | None = None,
+        content: str | None = None,
+        category: str | None = None,
+        summary: str | None = None,
+    ) -> dict:
+        slug = _require_wiki_slug(slug)
+        return self._respond(
+            "update_wiki_page",
+            {
+                "slug": slug,
+                "title": title,
+                "content": content,
+                "category": category,
+                "summary": summary,
+            },
+        )
+
+    def iter_wiki_pages(self, **kwargs: Any) -> Iterator[dict]:
+        # Mirrors the other iterators here: records the call and yields the
+        # canned list, rather than re-implementing pagination against a
+        # double that returns one fixed page forever.
+        self.calls.append(("iter_wiki_pages", kwargs))
+        resp = self._responses.get("get_wiki_pages", {"items": []})
+        items = resp.get("items", []) if isinstance(resp, dict) else resp
+        max_results = kwargs.get("max_results")
+        for i, item in enumerate(items):
+            if max_results is not None and i >= max_results:
+                return
+            yield item
+
+    def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0) -> list:
+        return self._respond("get_wiki_history", {"slug": slug, "limit": limit, "offset": offset})
+
+    def get_wiki_revision(self, slug: str, revision_id: str) -> dict:
+        return self._respond("get_wiki_revision", {"slug": slug, "revision_id": revision_id})
 
     # ── System ──
 
