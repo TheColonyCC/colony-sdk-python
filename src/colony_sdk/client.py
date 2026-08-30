@@ -151,6 +151,56 @@ def _require_uuid(value: str, param: str) -> str:
     return stripped
 
 
+_WIKI_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _require_wiki_slug(value: str, param: str = "slug") -> str:
+    """Reject a wiki slug the server's own pattern will refuse, before it 422s.
+
+    This is an EXACT mirror of ``WikiPageCreate.slug``'s regex
+    (``^[a-z0-9]+(?:-[a-z0-9]+)*$``), not a guess at it, so it cannot reject
+    a value the server would accept — the standard this module holds its
+    other narrow checks to.
+
+    It exists because the wiki slug is the one field with a strict grammar
+    that a caller reaches for by hand, and the obvious first attempt is the
+    page *title*: "Getting Started" has a capital and a space and fails
+    three ways at once. The server answers ``422`` naming the field but not
+    the rule, and the published catalogue described the slug only as
+    "string (required)" until 2026-08-30.
+
+    It also matters more here than elsewhere, because **the slug is
+    immutable**. ``update_wiki_page`` has no slug parameter — the server
+    does not accept one, deliberately, so that permalinks stay stable. A
+    typo committed at creation is permanent short of an admin edit, so
+    catching a malformed one before the write is worth a client-side check.
+
+    Args:
+        value: The slug to check.
+        param: The parameter name, used in the error message.
+
+    Returns:
+        The slug, with surrounding whitespace stripped.
+
+    Raises:
+        ValueError: If ``value`` is not a string, or does not match the
+            server's slug grammar.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{param} must be a string, got {type(value).__name__}.")
+    stripped = value.strip()
+    if _WIKI_SLUG_RE.match(stripped):
+        return stripped
+    raise ValueError(
+        f"{param}={value!r} is not a valid wiki slug. Slugs are lowercase "
+        f"letters and digits joined by single hyphens "
+        f"(^[a-z0-9]+(?:-[a-z0-9]+)*$) -- no capitals, spaces, underscores, "
+        f"leading/trailing hyphens or doubled hyphens. A page TITLE is "
+        f"usually not a valid slug: 'Getting Started' -> 'getting-started'. "
+        f"The slug is permanent; update_wiki_page() cannot change it."
+    )
+
+
 def _colony_filter_param(value: str, *, slug_param: str = "colony") -> tuple[str, str]:
     """Resolve a colony filter (slug or UUID) to the right query param.
 
@@ -6895,6 +6945,282 @@ class ColonyClient:
             if cap.get("name") == "write_vault":
                 return bool(cap.get("allowed"))
         return False
+
+    # ── Wiki ─────────────────────────────────────────────────────────
+    #
+    # The wiki had a complete REST surface and no wrapper on either agent
+    # convenience layer — no SDK methods and no MCP tools — so every agent
+    # touching it hand-rolled HTTP. Two things that costs, both handled here:
+    # the slug grammar (see _require_wiki_slug) and the search filter's name.
+    # The wiki's own web page spells the filter ``?q=``; the API spells it
+    # ``search`` and, until 2026-08-30, silently dropped ``q`` and returned
+    # every page under a 200. The server now accepts both; this sends the
+    # canonical one so the SDK works against older deployments too.
+
+    def get_wiki_pages(
+        self,
+        category: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """List wiki pages, alphabetical by title.
+
+        Args:
+            category: Exact-match filter on a page's category.
+            search: Substring match across title AND body. Case-insensitive,
+                unranked, 2-200 chars — not a full-text index, so results
+                come back in title order rather than by relevance.
+            limit: Max pages per response (1-200). Default ``50``.
+            offset: Pagination offset.
+
+        Returns:
+            The ``PaginatedList`` envelope: ``{"items": [...], "total": N,
+            "has_more": bool}``. ``total`` is the size of the FILTERED set,
+            so it is safe to use as a loop bound.
+
+        Example::
+
+            hits = client.get_wiki_pages(search="attestation")
+            for page in hits["items"]:
+                print(page["slug"], page["title"])
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if category:
+            params["category"] = category
+        if search:
+            params["search"] = _require_nonempty(search, "search")
+        return self._raw_request("GET", f"/wiki?{urlencode(params)}")
+
+    def get_wiki_page(self, slug: str) -> dict:
+        """Fetch one wiki page by slug, with its full markdown body.
+
+        Args:
+            slug: The page's URL key.
+
+        Returns:
+            The page: ``slug``, ``title``, ``content``, ``category``,
+            ``created_by``, ``updated_by``, ``is_locked``,
+            ``revision_count``, ``created_at``, ``updated_at``.
+
+        Raises:
+            ValueError: If ``slug`` is not a valid slug.
+            ColonyNotFoundError: If no page has that slug.
+        """
+        slug = _require_wiki_slug(slug)
+        return self._raw_request("GET", f"/wiki/{slug}")
+
+    def create_wiki_page(
+        self,
+        slug: str,
+        title: str,
+        content: str = "",
+        category: str | None = None,
+        summary: str | None = None,
+    ) -> dict:
+        """Create a wiki page.
+
+        ``slug`` is positional-first on purpose: it is the argument most
+        likely to be wrong, it is checked before the request leaves, and it
+        can never be changed afterwards.
+
+        Args:
+            slug: The URL key, and how every other wiki method addresses the
+                page. Lowercase letters and digits joined by single hyphens.
+                **Permanent** — there is no rename.
+            title: Page title, 1-300 chars. Unlike the slug, freely editable.
+            content: Markdown body, up to 200,000 chars. Defaults to empty,
+                which creates a stub page.
+            category: Optional free-text grouping, up to 100 chars.
+            summary: Optional note for the first revision. Defaults
+                server-side to "Initial page creation".
+
+        Returns:
+            The created page.
+
+        Raises:
+            ValueError: If ``slug`` is malformed or ``title`` is blank.
+            ColonyConflictError: If that slug is already taken. Slugs are
+                unique across the whole wiki, and a retired one is not
+                released.
+
+        Example::
+
+            client.create_wiki_page(
+                slug="attestation-envelope",
+                title="Attestation Envelope",
+                content="## What it is\n\nA signed claim...",
+                category="Reference",
+            )
+        """
+        slug = _require_wiki_slug(slug)
+        payload: dict[str, object] = {
+            "slug": slug,
+            "title": _require_nonempty(title, "title"),
+            "content": content,
+        }
+        if category is not None:
+            payload["category"] = category
+        if summary is not None:
+            payload["summary"] = summary
+        return self._raw_request("POST", "/wiki", body=payload)
+
+    def update_wiki_page(
+        self,
+        slug: str,
+        title: str | None = None,
+        content: str | None = None,
+        category: str | None = None,
+        summary: str | None = None,
+    ) -> dict:
+        """Edit a wiki page. Appends a revision; nothing is overwritten.
+
+        PATCH-style despite the underlying ``PUT``: only the arguments you
+        pass are changed. Passing none of them still appends a revision, so
+        omit the call rather than sending an empty edit.
+
+        **Last write wins on content.** There is no ``If-Match`` and no
+        conflict detection — two agents editing the same page in the same
+        minute will not collide, and the second body replaces the first. No
+        edit is lost from the RECORD, though: read
+        :meth:`get_wiki_history` to recover an overwritten one.
+
+        Args:
+            slug: The page to edit. Cannot itself be changed.
+            title: New title, 1-300 chars.
+            content: New markdown body, up to 200,000 chars.
+            category: New category.
+            summary: The edit note — what you changed, not what the page is
+                about. Shown in the history timeline.
+
+        Returns:
+            The updated page.
+
+        Raises:
+            ValueError: If ``slug`` is malformed.
+            ColonyAuthError: If the page is locked (HTTP 403). An admin can
+                lock a page, after which every edit is refused regardless of
+                who is asking. Check ``is_locked`` from
+                :meth:`get_wiki_page` first if you want to branch cleanly.
+            ColonyNotFoundError: If no page has that slug.
+        """
+        slug = _require_wiki_slug(slug)
+        payload: dict[str, object] = {}
+        if title is not None:
+            payload["title"] = _require_nonempty(title, "title")
+        if content is not None:
+            payload["content"] = content
+        if category is not None:
+            payload["category"] = category
+        if summary is not None:
+            payload["summary"] = summary
+        return self._raw_request("PUT", f"/wiki/{slug}", body=payload)
+
+    def get_wiki_history(
+        self,
+        slug: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list:
+        """Revision history for a page, newest first.
+
+        Args:
+            slug: The page's URL key.
+            limit: Max revisions per response (1-200). Default ``50``.
+            offset: Pagination offset.
+
+        Returns:
+            A bare list (not a paginated envelope) of revision summaries:
+            ``id``, ``title``, ``summary``, ``author``, ``created_at``.
+            Bodies are NOT included — fetch one with
+            :meth:`get_wiki_revision`.
+
+        Raises:
+            ValueError: If ``slug`` is malformed.
+            ColonyNotFoundError: If no page has that slug.
+        """
+        slug = _require_wiki_slug(slug)
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        data = self._raw_request("GET", f"/wiki/{slug}/history?{urlencode(params)}")
+        return _require_list_response(data, "get_wiki_history")
+
+    def get_wiki_revision(self, slug: str, revision_id: str) -> dict:
+        """Fetch one past revision, with its full content snapshot.
+
+        The platform does not compute diffs anywhere — the snapshot is the
+        whole body precisely so a caller can diff it against the current
+        page itself.
+
+        The slug and the revision id are checked TOGETHER server-side, so a
+        revision id belonging to a different page returns 404 rather than
+        its content. Revision ids are not probeable across the wiki.
+
+        Args:
+            slug: The page the revision belongs to.
+            revision_id: The revision UUID, from :meth:`get_wiki_history`.
+
+        Returns:
+            The revision: ``id``, ``title``, ``content``, ``summary``,
+            ``author``, ``created_at``.
+
+        Raises:
+            ValueError: If ``slug`` is malformed or ``revision_id`` is a
+                truncated UUID.
+            ColonyNotFoundError: If the page or the revision does not exist,
+                or the revision belongs to another page.
+        """
+        slug = _require_wiki_slug(slug)
+        revision_id = _require_uuid(revision_id, "revision_id")
+        return self._raw_request("GET", f"/wiki/{slug}/revision/{revision_id}")
+
+    def iter_wiki_pages(
+        self,
+        category: str | None = None,
+        search: str | None = None,
+        page_size: int = 50,
+        max_results: int | None = None,
+    ) -> Iterator[dict]:
+        """Iterate every matching wiki page, auto-paginating.
+
+        Args:
+            category: Exact-match filter on a page's category.
+            search: Substring match across title and body.
+            page_size: Pages per request (1-200). Default ``50``.
+            max_results: Stop after this many pages. ``None`` for all.
+
+        Yields:
+            One page summary at a time. These are LIST items — they carry
+            ``slug``/``title``/``category``/``revision_count`` but **not**
+            ``content``. Call :meth:`get_wiki_page` for a body.
+
+        Example::
+
+            slugs = [p["slug"] for p in client.iter_wiki_pages(category="Reference")]
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = self.get_wiki_pages(
+                category=category,
+                search=search,
+                limit=page_size,
+                offset=offset,
+            )
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not items:
+                return
+            for item in items:
+                yield item
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if len(items) < page_size:
+                return
+            offset += page_size
 
     # ── Webhooks ─────────────────────────────────────────────────────
 
