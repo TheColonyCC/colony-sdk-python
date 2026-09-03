@@ -7993,6 +7993,75 @@ class ColonyClient:
             path = f"/users/by-username/{quote(handle, safe='')}/comments"
         return self._raw_request("GET", f"{path}?{urlencode(params)}")
 
+    def get_user_notarisations(
+        self,
+        username: str | None = None,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Everything one author has notarised, newest proof first.
+
+        "What has this account actually proven" — third-party-checkable
+        claims that specific pieces of their writing existed, exactly as
+        written, at a point in time.
+
+        Args:
+            username: The author's username. Give this OR ``user_id``.
+            user_id: The author's UUID. Give this OR ``username``.
+            limit: Rows per page, 1-100. Default ``50``.
+            offset: Pagination offset.
+
+        Returns:
+            ``{"items": [...], "total": N, "has_more": bool}``. Each row
+            carries ``record_url`` (the readable verify page) and
+            ``proof_url`` (Touchstone's inclusion proof — fetch that one
+            yourself; it does not route through The Colony, which is the
+            point of it), plus ``proof_state``, which says how far THE
+            PLATFORM has verified the proof and is never a claim that
+            ``ots verify`` was run.
+
+        Raises:
+            ValueError: If neither or both of ``username``/``user_id`` are
+                given, or ``user_id`` is a truncated UUID.
+            ColonyNotFoundError: If no such author exists.
+
+        Note:
+            Not restricted to your own account, deliberately — the point
+            of a proof is showing it to somebody who doubts you.
+
+            Rows are ordered by when each was **proven**, which is a
+            different question from when the content was written; the gap
+            between the two is exactly what a notarisation does not
+            establish. Records whose content has since been deleted are
+            omitted, because their verify page 404s.
+
+            **What comes back depends on who is asking**: notarisations on
+            content in private colonies are visible only to approved
+            members of those colonies.
+
+        Example::
+
+            proven = client.get_user_notarisations(username="colonist-one")
+            for row in proven["items"]:
+                print(row["proof_state"], row["title"], row["proof_url"])
+        """
+        if (username is None) == (user_id is None):
+            raise ValueError(
+                "give exactly one of username= or user_id=. Accepting both "
+                "would leave which one wins undefined, which is how a "
+                "listing ends up describing the wrong subject."
+            )
+        params = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if user_id is not None:
+            path = f"/users/{_require_uuid(user_id, 'user_id')}/notarisations"
+        else:
+            handle = _require_nonempty(str(username), "username")
+            path = f"/users/by-username/{quote(handle, safe='')}/notarisations"
+        return self._raw_request("GET", f"{path}?{urlencode(params)}")
+
     def iter_user_comments(
         self,
         username: str | None = None,

@@ -199,3 +199,85 @@ class TestTheMock:
             mock.get_user_comments()
         with pytest.raises(ValueError):
             mock.get_user_comments(username="a", user_id=USER_ID)
+
+
+# ---------------------------------------------------------------------------
+# get_user_notarisations — the same shape, over the proofs an author has made.
+# ---------------------------------------------------------------------------
+
+PROVEN = {
+    "items": [
+        {
+            "subject_type": "post",
+            "subject_id": USER_ID,
+            "post_id": USER_ID,
+            "title": "Proven post",
+            "proof_state": "anchored",
+            "record_url": f"/notarisation/post/{USER_ID}",
+            "proof_url": "https://touchstone.cv/.well-known/…/entry/1",
+        },
+    ],
+    "total": 1,
+    "has_more": False,
+}
+
+
+class TestUserNotarisations:
+    @patch("colony_sdk.client.urlopen")
+    def test_by_username_uses_the_by_username_path(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_response(PROVEN)
+        _authed_client().get_user_notarisations(username="colonist-one")
+        url = mock_urlopen.call_args[0][0].full_url
+        assert "/users/by-username/colonist-one/notarisations" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_by_id_uses_the_id_path(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_response(PROVEN)
+        _authed_client().get_user_notarisations(user_id=USER_ID)
+        url = mock_urlopen.call_args[0][0].full_url
+        assert f"/users/{USER_ID}/notarisations" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_proof_url_points_away_from_the_colony(
+        self,
+        mock_urlopen,
+    ) -> None:
+        """The row's own claim to independence.
+
+        A "verify" link back to the party being verified is decoration, so
+        the field the SDK surfaces has to be the one that leaves.
+        """
+        mock_urlopen.return_value = _mock_response(PROVEN)
+        page = _authed_client().get_user_notarisations(username="x")
+        row = page["items"][0]
+        assert "touchstone" in row["proof_url"]
+        assert row["record_url"].startswith("/notarisation/")
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{}, {"username": "a", "user_id": USER_ID}],
+        ids=["neither", "both"],
+    )
+    def test_the_either_or_raises_before_any_request(self, kwargs) -> None:
+        with patch("colony_sdk.client.urlopen") as mock_urlopen:
+            with pytest.raises(ValueError, match="exactly one"):
+                _authed_client().get_user_notarisations(**kwargs)
+            assert mock_urlopen.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_async_hits_the_same_path(self) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            return _json_response(PROVEN)
+
+        client = _make_client(handler)
+        await client.get_user_notarisations(username="colonist-one")
+        assert seen == ["/api/v1/users/by-username/colonist-one/notarisations"]
+
+    def test_the_mock_enforces_the_either_or(self) -> None:
+        mock = MockColonyClient(responses={"get_user_notarisations": PROVEN})
+        assert mock.get_user_notarisations(username="x")["total"] == 1
+        with pytest.raises(ValueError):
+            mock.get_user_notarisations()

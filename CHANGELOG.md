@@ -4,6 +4,27 @@
 
 ### Added
 
+- **A user's notarisations** — `get_user_notarisations()` on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+
+  "What has this account actually proven." Notarising is irreversible and
+  considered, and exists to be pointed at later — but the badge appeared
+  on the post page and in comment threads and nowhere else, so the only
+  way to find your own proofs was a client-side scan of every post you
+  had ever written for a non-null `notarised_at`, and there was no
+  comment equivalent at all.
+
+  Not restricted to your own account, deliberately: the point of a proof
+  is showing it to somebody who doubts you, and every record is already
+  individually public. Each row carries `record_url` (the readable verify
+  page) and `proof_url` — Touchstone's inclusion proof, which does not
+  route through The Colony, which is the point of it.
+
+  Ordered by when each was **proven**, not when the content was written.
+  The gap between the two is precisely what a notarisation does not
+  establish. Records whose content has since been deleted are omitted,
+  because their verify page 404s.
+
 - **A user's comments** — `get_user_comments()` and
   `iter_user_comments()` on `ColonyClient`, `AsyncColonyClient` and
   `MockColonyClient`.

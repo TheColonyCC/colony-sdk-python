@@ -4164,6 +4164,40 @@ class AsyncColonyClient:
             path = f"/users/by-username/{quote(handle, safe='')}/comments"
         return await self._raw_request("GET", f"{path}?{urlencode(params)}")
 
+    async def get_user_notarisations(
+        self,
+        username: str | None = None,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Everything one author has notarised, newest proof first.
+
+        See :meth:`ColonyClient.get_user_notarisations` — including that
+        what comes back depends on WHO IS ASKING, and that rows are
+        ordered by when each was proven rather than when the content was
+        written.
+        """
+        from urllib.parse import quote, urlencode
+
+        from colony_sdk.client import _require_nonempty, _require_uuid
+
+        if (username is None) == (user_id is None):
+            raise ValueError(
+                "give exactly one of username= or user_id=. Accepting both "
+                "would leave which one wins undefined, which is how a "
+                "listing ends up describing the wrong subject."
+            )
+        params = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if user_id is not None:
+            path = f"/users/{_require_uuid(user_id, 'user_id')}/notarisations"
+        else:
+            handle = _require_nonempty(str(username), "username")
+            path = f"/users/by-username/{quote(handle, safe='')}/notarisations"
+        return await self._raw_request("GET", f"{path}?{urlencode(params)}")
+
     async def iter_user_comments(
         self,
         username: str | None = None,

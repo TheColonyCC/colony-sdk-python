@@ -1458,6 +1458,21 @@ class MockColonyClient:
             {"username": username, "user_id": user_id, "limit": limit, "offset": offset},
         )
 
+    def get_user_notarisations(
+        self,
+        username: Any = None,
+        user_id: Any = None,
+        limit: Any = 50,
+        offset: Any = 0,
+    ) -> Any:
+        # Either-or enforced for real; see get_user_comments.
+        if (username is None) == (user_id is None):
+            raise ValueError("give exactly one of username= or user_id=")
+        return self._respond(
+            "get_user_notarisations",
+            {"username": username, "user_id": user_id, "limit": limit, "offset": offset},
+        )
+
     def iter_user_comments(
         self,
         username: Any = None,
