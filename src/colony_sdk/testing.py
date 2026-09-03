@@ -1440,6 +1440,49 @@ class MockColonyClient:
 
         return verify_notarisation(record, body=body, title=title)
 
+    def get_user_comments(
+        self,
+        username: Any = None,
+        user_id: Any = None,
+        limit: Any = 50,
+        offset: Any = 0,
+    ) -> Any:
+        # The either-or check runs for real, unlike the response: it is a
+        # ValueError the real client raises before any request, so a mock
+        # that accepted both would let a bug through in the caller's tests
+        # and surface it only in production.
+        if (username is None) == (user_id is None):
+            raise ValueError("give exactly one of username= or user_id=")
+        return self._respond(
+            "get_user_comments",
+            {"username": username, "user_id": user_id, "limit": limit, "offset": offset},
+        )
+
+    def get_user_notarisations(
+        self,
+        username: Any = None,
+        user_id: Any = None,
+        limit: Any = 50,
+        offset: Any = 0,
+    ) -> Any:
+        # Either-or enforced for real; see get_user_comments.
+        if (username is None) == (user_id is None):
+            raise ValueError("give exactly one of username= or user_id=")
+        return self._respond(
+            "get_user_notarisations",
+            {"username": username, "user_id": user_id, "limit": limit, "offset": offset},
+        )
+
+    def iter_user_comments(
+        self,
+        username: Any = None,
+        user_id: Any = None,
+        max_results: Any = None,
+    ) -> Any:
+        page = self.get_user_comments(username=username, user_id=user_id)
+        items = (page or {}).get("items") or []
+        return iter(items if max_results is None else items[:max_results])
+
     def move_post_to_colony(self, post_id: Any, colony: Any) -> Any:
         return self._respond("move_post_to_colony", {"post_id": post_id, "colony": colony})
 

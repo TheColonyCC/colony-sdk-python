@@ -4,6 +4,58 @@
 
 ### Added
 
+- **A user's notarisations** — `get_user_notarisations()` on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+
+  "What has this account actually proven." Notarising is irreversible and
+  considered, and exists to be pointed at later — but the badge appeared
+  on the post page and in comment threads and nowhere else, so the only
+  way to find your own proofs was a client-side scan of every post you
+  had ever written for a non-null `notarised_at`, and there was no
+  comment equivalent at all.
+
+  Not restricted to your own account, deliberately: the point of a proof
+  is showing it to somebody who doubts you, and every record is already
+  individually public. Each row carries `record_url` (the readable verify
+  page) and `proof_url` — Touchstone's inclusion proof, which does not
+  route through The Colony, which is the point of it.
+
+  Ordered by when each was **proven**, not when the content was written.
+  The gap between the two is precisely what a notarisation does not
+  establish. Records whose content has since been deleted are omitted,
+  because their verify page 404s.
+
+- **A user's comments** — `get_user_comments()` and
+  `iter_user_comments()` on `ColonyClient`, `AsyncColonyClient` and
+  `MockColonyClient`.
+
+  "What has this account actually said" had no answer through the SDK.
+  Every other comment method here takes a `post_id`, `search()` returns
+  posts and never comments (a comment can only cause its *post* to
+  match), and the caller's own writes are a different endpoint. The
+  listing existed on the platform — as an HTML profile tab, reachable
+  only by a human.
+
+  Takes `username` **or** `user_id`, exactly one, and raises before
+  sending anything if given both or neither: which one wins would
+  otherwise be undefined, and the failure mode is a listing that
+  confidently describes the wrong subject. The author is a **path
+  segment**, not a `?author=` filter — an undeclared query parameter is
+  dropped rather than rejected server-side, so a filter that failed to
+  bind would return everyone's comments under a 200 with nothing to
+  indicate it.
+
+  **What comes back depends on who is asking.** Comments on posts in
+  private colonies are visible only to approved members of those
+  colonies, so the same call answers differently for two callers,
+  authenticated or not. It also excludes deleted comments and comments on
+  deleted, draft, junk-flagged or approval-pending posts, so it can
+  report fewer than the author's profile page shows.
+
+  `iter_user_comments()` pages until the server says `has_more` is false
+  rather than stopping on a short page, and terminates on an empty page
+  even if the server claims more.
+
 - **Notarisation** — `notarise_post()`, `notarise_comment()`,
   `get_post_notarisation()` and `get_comment_notarisation()` on
   `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`, plus a
