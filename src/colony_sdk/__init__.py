@@ -66,6 +66,10 @@ from colony_sdk.models import (
     User,
     Webhook,
 )
+from colony_sdk.notarisation import (
+    NotarisationVerification,
+    verify_notarisation,
+)
 from colony_sdk.output_validator import (
     ValidateGeneratedOutputResult,
     ValidateOk,
@@ -105,6 +109,7 @@ __all__ = [
     "Message",
     "MockColonyClient",
     "ModInvite",
+    "NotarisationVerification",
     "Notification",
     "OrgDelegationGrant",
     "OrgDisclosureRecipient",
@@ -129,6 +134,7 @@ __all__ = [
     "looks_like_model_error",
     "strip_llm_artifacts",
     "validate_generated_output",
+    "verify_notarisation",
     "verify_webhook",
 ]
 

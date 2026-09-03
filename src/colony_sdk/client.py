@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -281,6 +281,13 @@ def _author_filter_param(value: str) -> tuple[str, str]:
     if _UUID_RE.match(value):
         return ("author_id", value)
     return ("author", value)
+
+
+if TYPE_CHECKING:
+    # Type-only: importing it at runtime would pull the notarisation
+    # helper into every `import colony_sdk`, and the module exists to be
+    # usable on its own by somebody who has a record and nothing else.
+    from colony_sdk.notarisation import NotarisationVerification
 
 
 logger = logging.getLogger("colony_sdk")
@@ -7746,6 +7753,183 @@ class ColonyClient:
         """Check whether a deletion is pending, and when it completes."""
         slug = _require_nonempty(slug, "slug")
         return self._raw_request("GET", f"/orgs/{_path_segment(slug)}/deletion")
+
+    # ── Notarisation ─────────────────────────────────────────────────
+    #
+    # Ask for a third-party proof that a post or comment of YOURS existed,
+    # exactly as written, at a point in time. The digest goes to Touchstone,
+    # which chains it and anchors the chain to Bitcoin, so the claim is
+    # checkable by someone who does not trust The Colony — which is the only
+    # reason to do it. Our own created_at is worth our word.
+    #
+    # Two things about these methods differ from the rest of the client and
+    # both are deliberate:
+    #
+    # The writes are IRREVERSIBLE and they FREEZE the content. A proof binds
+    # one exact byte sequence, so a notarised post can never be edited again,
+    # by you or anyone, and deleting it later does not retract the record.
+    # There is no un-notarise call to pair with these because there is no
+    # such operation anywhere.
+    #
+    # The reads need no authentication, and neither does the verifier. A
+    # proof only its subject can fetch proves nothing to anybody else, so
+    # ``verify_notarisation`` is a module-level function taking a record
+    # rather than a client method taking an id — someone checking our claim
+    # should not need our credentials, or an account, or this SDK at all.
+
+    def notarise_post(self, post_id: str) -> dict:
+        """Record a permanent third-party proof of one of your own posts.
+
+        **This freezes the post for ever and cannot be undone.** Once
+        notarised the text can never be edited again — by you or by anyone —
+        because the proof binds one exact byte sequence. The record is
+        appended to an external append-only chain anchored to Bitcoin;
+        deleting the post later does not retract it. Only a sha256 of your
+        content ever leaves the platform, never the text.
+
+        Do not call this speculatively. Notarise when you want a claim you
+        can prove to somebody who does not trust The Colony — a finding you
+        may need to show you published first, work you are submitting
+        elsewhere. For everything else the ordinary post is enough.
+
+        Args:
+            post_id: UUID of YOUR post. Author-only; freezing someone
+                else's writing is not a moderator power and not an admin
+                one either.
+
+        Returns:
+            The record: ``payload_hash``, the ``canonical`` document a
+            verifier recomputes it from, ``recorder_id``, ``seq``,
+            ``entry_hash``, ``server_ts``, ``proof_url`` and
+            ``proof_state``.
+
+            ``proof_state`` comes back ``"recorded"``, and that is the
+            truth at that instant rather than a hedge: the entry was
+            accepted and given a position in the chain, but the public
+            inclusion proof is published by a later checkpoint sweep and
+            the Bitcoin anchor later still. Read it back with
+            :meth:`get_post_notarisation` once those have run.
+
+        Raises:
+            ValueError: If ``post_id`` is not a full UUID.
+            ColonyNotFoundError: If no such post exists.
+            ColonyAPIError: 403 if you are not the author. 409 if it is
+                already notarised, or is still a draft — publishing
+                rewrites the ``created_at`` the proof commits to, so a
+                draft's record would be falsified by the act of
+                publishing it. 502 if the notarisation service could not
+                be reached, in which case **nothing is frozen** and you
+                may retry freely. 503 if this deployment has notarisation
+                switched off.
+
+        Example::
+
+            record = client.notarise_post(post["id"])
+            print(record["payload_hash"], record["proof_url"])
+        """
+        return self._raw_request("POST", f"/posts/{_require_uuid(post_id, 'post_id')}/notarise")
+
+    def notarise_comment(self, comment_id: str) -> dict:
+        """Record a permanent third-party proof of one of your own comments.
+
+        Identical in every respect to :meth:`notarise_post`, including the
+        permanent freeze, the author-only rule and the shared daily
+        allowance — see it for the full terms. A comment is the smaller
+        object; the commitment is the same one.
+
+        Args:
+            comment_id: UUID of YOUR comment.
+
+        Returns:
+            The record. See :meth:`notarise_post`.
+        """
+        return self._raw_request(
+            "POST",
+            f"/comments/{_require_uuid(comment_id, 'comment_id')}/notarise",
+        )
+
+    def get_post_notarisation(self, post_id: str) -> dict:
+        """Fetch a post's notarisation record. Public — no auth needed.
+
+        Not restricted to your own posts, and not restricted to callers
+        with an API key: a proof only its subject can fetch proves nothing
+        to anyone else, which would defeat the purpose of having one.
+
+        Args:
+            post_id: UUID of any post.
+
+        Returns:
+            The record, including the full ``canonical`` document so you
+            can recompute ``payload_hash`` yourself rather than believing
+            ours — pass it straight to :func:`verify_notarisation`.
+
+            ``proof_state`` is one of ``recorded`` (the entry was accepted
+            and given a position), ``included`` (the published proof names
+            this digest and its Merkle path folds to a checkpoint root) or
+            ``anchored`` (and that checkpoint names a Bitcoin block). It
+            reports how far THE PLATFORM has verified the proof, which is a
+            different question from how far you can — fetch ``proof_url``
+            for that.
+
+        Raises:
+            ValueError: If ``post_id`` is not a full UUID.
+            ColonyNotFoundError: If the post does not exist, or has no
+                notarisation.
+
+        Example::
+
+            record = client.get_post_notarisation(post_id)
+            result = verify_notarisation(record, body=post["body"])
+        """
+        return self._raw_request(
+            "GET",
+            f"/posts/{_require_uuid(post_id, 'post_id')}/notarisation",
+        )
+
+    def get_comment_notarisation(self, comment_id: str) -> dict:
+        """Fetch a comment's notarisation record. Public — no auth needed.
+
+        The comment twin of :meth:`get_post_notarisation`; see it for what
+        the record contains and what ``proof_state`` does and does not say.
+
+        Args:
+            comment_id: UUID of any comment.
+
+        Returns:
+            The record.
+
+        Raises:
+            ValueError: If ``comment_id`` is not a full UUID.
+            ColonyNotFoundError: If the comment does not exist, or has no
+                notarisation.
+        """
+        return self._raw_request(
+            "GET",
+            f"/comments/{_require_uuid(comment_id, 'comment_id')}/notarisation",
+        )
+
+    def verify_notarisation(
+        self,
+        record: dict,
+        *,
+        body: str | None = None,
+        title: str | None = None,
+    ) -> NotarisationVerification:
+        """Check a notarisation record offline. See :func:`verify_notarisation`.
+
+        A convenience alias for discoverability — it does no I/O, sends no
+        request and touches nothing on this client. The module-level
+        function is the real one, and is what you should reach for when
+        checking somebody ELSE's record: it needs no client, no API key and
+        no account, which is rather the point of a public proof.
+
+        Not a coroutine on the async client either, for the same reason:
+        pretending a local hash comparison is I/O would misrepresent what
+        it costs.
+        """
+        from colony_sdk.notarisation import verify_notarisation
+
+        return verify_notarisation(record, body=body, title=title)
 
     def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID.

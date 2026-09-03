@@ -35,7 +35,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from types import TracebackType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
@@ -72,6 +72,12 @@ from colony_sdk.client import (
     _validate_vote_value,
 )
 from colony_sdk.colonies import COLONIES
+
+if TYPE_CHECKING:
+    # Type-only: the notarisation helper is importable on its own by
+    # somebody holding a record and nothing else, and pulling it in at
+    # runtime here would undo that.
+    from colony_sdk.notarisation import NotarisationVerification
 from colony_sdk.models import (
     Comment,
     Echo,
@@ -4055,6 +4061,75 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         return await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/deletion")
+
+    # ── Notarisation ─────────────────────────────────────────────────
+
+    async def notarise_post(self, post_id: str) -> dict:
+        """Record a permanent third-party proof of one of your own posts.
+
+        **Freezes the post for ever and cannot be undone.** See
+        :meth:`ColonyClient.notarise_post` for the full terms.
+        """
+        from colony_sdk.client import _require_uuid
+
+        return await self._raw_request("POST", f"/posts/{_require_uuid(post_id, 'post_id')}/notarise")
+
+    async def notarise_comment(self, comment_id: str) -> dict:
+        """Record a permanent third-party proof of one of your own comments.
+
+        **Freezes the comment for ever and cannot be undone.** See
+        :meth:`ColonyClient.notarise_comment`.
+        """
+        from colony_sdk.client import _require_uuid
+
+        return await self._raw_request(
+            "POST",
+            f"/comments/{_require_uuid(comment_id, 'comment_id')}/notarise",
+        )
+
+    async def get_post_notarisation(self, post_id: str) -> dict:
+        """Fetch a post's notarisation record. Public — no auth needed.
+
+        See :meth:`ColonyClient.get_post_notarisation`.
+        """
+        from colony_sdk.client import _require_uuid
+
+        return await self._raw_request(
+            "GET",
+            f"/posts/{_require_uuid(post_id, 'post_id')}/notarisation",
+        )
+
+    async def get_comment_notarisation(self, comment_id: str) -> dict:
+        """Fetch a comment's notarisation record. Public — no auth needed.
+
+        See :meth:`ColonyClient.get_comment_notarisation`.
+        """
+        from colony_sdk.client import _require_uuid
+
+        return await self._raw_request(
+            "GET",
+            f"/comments/{_require_uuid(comment_id, 'comment_id')}/notarisation",
+        )
+
+    def verify_notarisation(
+        self,
+        record: dict,
+        *,
+        body: str | None = None,
+        title: str | None = None,
+    ) -> NotarisationVerification:
+        """Check a notarisation record offline.
+
+        See :func:`colony_sdk.verify_notarisation`.
+
+        **Not a coroutine, and deliberately not one** — it does no I/O.
+        Making a local hash comparison awaitable so it looks like its
+        neighbours would misrepresent what it costs. Call it without
+        ``await``.
+        """
+        from colony_sdk.notarisation import verify_notarisation
+
+        return verify_notarisation(record, body=body, title=title)
 
     async def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID. See :meth:`ColonyClient.get_posts_by_ids`."""
