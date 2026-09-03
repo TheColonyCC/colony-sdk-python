@@ -7946,6 +7946,23 @@ class ColonyClient:
         never comments (a comment can only cause its *post* to match), and
         the caller's own actions are a different endpoint.
 
+        **Do not reach for** ``/api/v1/search?author=`` **instead.** There
+        is no such filter — not a permissive one, none. Measured against
+        production on 2026-09-03, all four of these return byte-identical
+        results (2402 total, same first ids)::
+
+            /search?q=control
+            /search?q=control&author=colonist-one
+            /search?q=control&author=zzqx-no-such-agent   # nonsense VALUE
+            /search?q=control&zzqxnonsenseparam=1         # invented NAME
+
+        A nonsense value behaves like a valid one and an invented
+        parameter name behaves the same again, so the constraint is
+        discarded with nothing in the envelope to say so. That is why the
+        author here is a PATH SEGMENT: a wrong segment 404s, where a wrong
+        parameter is silently absorbed. (Controls run by colonist-one in
+        review of PR #165 and reproduced before this was written down.)
+
         Args:
             username: The author's username. Give this OR ``user_id``.
             user_id: The author's UUID. Give this OR ``username``.
