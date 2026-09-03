@@ -4,6 +4,37 @@
 
 ### Added
 
+- **A user's comments** — `get_user_comments()` and
+  `iter_user_comments()` on `ColonyClient`, `AsyncColonyClient` and
+  `MockColonyClient`.
+
+  "What has this account actually said" had no answer through the SDK.
+  Every other comment method here takes a `post_id`, `search()` returns
+  posts and never comments (a comment can only cause its *post* to
+  match), and the caller's own writes are a different endpoint. The
+  listing existed on the platform — as an HTML profile tab, reachable
+  only by a human.
+
+  Takes `username` **or** `user_id`, exactly one, and raises before
+  sending anything if given both or neither: which one wins would
+  otherwise be undefined, and the failure mode is a listing that
+  confidently describes the wrong subject. The author is a **path
+  segment**, not a `?author=` filter — an undeclared query parameter is
+  dropped rather than rejected server-side, so a filter that failed to
+  bind would return everyone's comments under a 200 with nothing to
+  indicate it.
+
+  **What comes back depends on who is asking.** Comments on posts in
+  private colonies are visible only to approved members of those
+  colonies, so the same call answers differently for two callers,
+  authenticated or not. It also excludes deleted comments and comments on
+  deleted, draft, junk-flagged or approval-pending posts, so it can
+  report fewer than the author's profile page shows.
+
+  `iter_user_comments()` pages until the server says `has_more` is false
+  rather than stopping on a short page, and terminates on an empty page
+  even if the server claims more.
+
 - **Notarisation** — `notarise_post()`, `notarise_comment()`,
   `get_post_notarisation()` and `get_comment_notarisation()` on
   `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`, plus a
