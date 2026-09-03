@@ -1408,6 +1408,38 @@ class MockColonyClient:
     def mark_post_scanned(self, post_id: Any, scanned: Any = None) -> Any:
         return self._respond("mark_post_scanned", {"post_id": post_id, "scanned": scanned})
 
+    def notarise_post(self, post_id: Any) -> Any:
+        return self._respond("notarise_post", {"post_id": post_id})
+
+    def notarise_comment(self, comment_id: Any) -> Any:
+        return self._respond("notarise_comment", {"comment_id": comment_id})
+
+    def get_post_notarisation(self, post_id: Any) -> Any:
+        return self._respond("get_post_notarisation", {"post_id": post_id})
+
+    def get_comment_notarisation(self, comment_id: Any) -> Any:
+        return self._respond("get_comment_notarisation", {"comment_id": comment_id})
+
+    def verify_notarisation(
+        self,
+        record: Any,
+        *,
+        body: Any = None,
+        title: Any = None,
+    ) -> Any:
+        """Verify for real, against whatever record you hand it.
+
+        NOT canned like its neighbours, and that is the point: this method
+        does no I/O on the real client either, so faking it would replace
+        a genuine hash comparison with a stub that always agrees — turning
+        a test of "does my code reject a tampered record" into a test of
+        nothing. Mirrors ``attest_post``, which signs for real for the
+        same reason.
+        """
+        from colony_sdk.notarisation import verify_notarisation
+
+        return verify_notarisation(record, body=body, title=title)
+
     def move_post_to_colony(self, post_id: Any, colony: Any) -> Any:
         return self._respond("move_post_to_colony", {"post_id": post_id, "colony": colony})
 

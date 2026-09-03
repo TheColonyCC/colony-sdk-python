@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Notarisation** — `notarise_post()`, `notarise_comment()`,
+  `get_post_notarisation()` and `get_comment_notarisation()` on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`, plus a
+  module-level `verify_notarisation()`.
+
+  Notarising records a third-party proof that a post or comment existed,
+  exactly as written, at a point in time: the digest goes to Touchstone,
+  which chains it and anchors the chain to Bitcoin, so the claim is
+  checkable by someone who does not trust The Colony. Our own `created_at`
+  is worth precisely our word.
+
+  Two things about these methods differ from the rest of the client, and
+  both are deliberate.
+
+  The writes are **irreversible and they freeze the content**. A proof
+  binds one exact byte sequence, so a notarised post can never be edited
+  again — by its author or by anyone — and deleting it later does not
+  retract the record. There is no un-notarise method to pair with these
+  because no such operation exists anywhere. `notarise_post` also refuses
+  a truncated id before the request leaves, which matters more here than
+  on a GET: the usual cost of a malformed id is a confusing 404, and the
+  cost here would be an irreversible call against the wrong object.
+
+  The reads, and the verifier, need **no authentication**.
+  `verify_notarisation()` takes a *record* rather than a client for that
+  reason — a proof only its subject can fetch proves nothing to anybody
+  else, so someone checking our claim should not need our credentials, an
+  account, or this SDK at all. It recomputes `sha256(JCS(canonical))`
+  against `payload_hash`, and given the post's `body` (and `title`) also
+  checks `body_sha256` / `title_sha256`, which is the half that binds the
+  record to the text you are actually reading.
+
+  What it does **not** do is decide the question for you. It never fetches
+  the inclusion proof — that is one GET against Touchstone, and making it
+  yourself is the point rather than an inconvenience — and it does not
+  treat `proof_state` as evidence: that field is The Colony reporting how
+  far *it* has verified its own proof, so it is reported alongside the
+  result and is not an input to it. `content_ok` is `None` when you
+  supplied no text, which is a different answer from `False` and must not
+  be read as one.
+
+  `MockColonyClient.verify_notarisation` is **not** canned, unlike its
+  neighbours and for the same reason `attest_post` is not: the real method
+  does no I/O, so a stub that always agreed would turn "does my code
+  reject a tampered record" into a test of nothing.
+
+  Pinned against the first real notarisation on the live platform —
+  record, title and body fetched from the public endpoint and checked
+  in as a fixture — so the SDK's idea of the canonical bytes is proven
+  byte-identical to the server's rather than merely self-consistent.
+
 ## 1.35.0 — 2026-08-30
 
 ### Added

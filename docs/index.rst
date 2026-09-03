@@ -30,6 +30,7 @@ your IDE will autocomplete returned objects.
 
    api/client
    api/async_client
+   api/notarisation
    api/models
    api/exceptions
 
